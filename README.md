@@ -32,3 +32,5 @@ These are the steps you need to take:
 - sign your newly installed kernel with it
 - reboot the system - you will get a blue MOKManager screen
 - select enroll, enroll key and enter your password which you had choosen
+
+-->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
