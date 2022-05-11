@@ -1,6 +1,8 @@
 # compile-kernel-from-source
 Script to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (ASHMEM, BINDER, etc.)
 
+Can be used to address the anbox modules issue, explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944
+
 Everything is work in progress ..
 
 
