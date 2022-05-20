@@ -1,5 +1,5 @@
 # compile-kernel-from-source
-Script to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (ASHMEM, BINDER, etc.)
+Scripts to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (ASHMEM, BINDER, etc.)
 
 Can be used to address the anbox modules issue, explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944
 
@@ -36,3 +36,22 @@ These are the steps you need to take:
 - select enroll, enroll key and enter your password which you had choosen
 
 -->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
+
+
+
+Generate and sign your kernel with automation script:
+
+1. Download the signkernel script and make it executable if it's not:
+chmod +x cfs_signkernel.sh
+
+2. execute it:
+./cfs_signkernel.sh
+
+3. - You will be asked to generate key files and enroll/import them into your linux / bios.
+   - If you already created the key files once and did set a password, you can say "NO" and
+     only sign your fresh installed custom kernel. Note that you need to do this also after
+     creating your key files and before rebooting.
+     Otherwise you cannot boot your unsigned kernel.
+
+
+Please report any bugs or errorsfound..
