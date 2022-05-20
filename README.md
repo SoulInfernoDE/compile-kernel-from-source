@@ -9,6 +9,7 @@ Everything is work in progress ..
 Instructions:
 
 1. Download the nogui or gui script and make it executable if it's not:
+
 chmod +x cfs_gui.sh cfs_nogui.sh
 
 2. execute it:
