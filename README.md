@@ -42,6 +42,7 @@ These are the steps you need to take:
 Generate and sign your kernel with automation script:
 
 1. Download the signkernel script and make it executable if it's not:
+
 chmod +x cfs_signkernel.sh
 
 2. execute it:
