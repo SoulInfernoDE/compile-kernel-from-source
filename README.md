@@ -56,4 +56,4 @@ chmod +x cfs_signkernel.sh
      Otherwise you cannot boot your unsigned kernel.
 
 
-Please report any bugs or errorsfound..
+Please report any bugs or errors found..
