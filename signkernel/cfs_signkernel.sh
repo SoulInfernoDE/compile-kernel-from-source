@@ -56,7 +56,7 @@ case $input in
  echo 'You have entered this version: '$KERNEL_VERSION'-android'
  echo ''
  cd ~
- sudo sbsign --key MOK.priv --cert MOK.pem /boot/vmlinuz-'$KERNEL_VERSION'-android --output /boot/vmlinuz-'$KERNEL_VERSION'-android
+ sudo sbsign --key MOK.priv --cert MOK.pem '/boot/vmlinuz-'$KERNEL_VERSION'-android' --output '/boot/vmlinuz-'$KERNEL_VERSION'-android'
  echo ''
  sudo update-grub
  echo ''
