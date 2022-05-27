@@ -34,6 +34,8 @@ echo "Ready to start compiling! Enter "'time nice make bindeb-pkg LOCALVERSION=-
 # echo 'Please add "LOCALVERSION=-android" only the first time you compile a kernel! Otherwise your kernel files will have'
 echo '"-android-android-android' added and so on..." "This is because the make command reads the installed version number also.."' 
 echo''
+
+read -r -p "
 ###############################################################
 # deb-file creation will start. Do you want to continue?      #
 #                                                             #
