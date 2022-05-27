@@ -51,6 +51,9 @@ case $input in
     [nN][oO]|[nN])
  echo "Signing your kernel.."
  echo ''
+ echo '' 'Here is a printout of what is installed:'
+ ls /boot/vmlinuz*-android
+ echo ''
  read -p "Which kernel version should be signed? (example: 5.14.18) " KERNEL_VERSION
  echo ''
  echo 'You have entered this version: '$KERNEL_VERSION'-android'
@@ -61,6 +64,7 @@ case $input in
  sudo update-grub
  echo ''
  echo $(green 'All done.. - please restart your computer!')
+ echo ''
  exit 1
        ;;
     *)
