@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#define variables at the top
+CPUCORES=$(nproc)
+
 echo "Kernel Pull Merge Script v0.1a"
 echo 'Installing dependencies'
 sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano
@@ -21,7 +24,30 @@ wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/
 ./scripts/kconfig/merge_config.sh .config .config-fragment
 echo 'merging new android options into the .config file:'
 make olddefconfig
-echo 'You have'
-nproc && echo 'cpu cores'
-echo "Ready to start compiling! Enter "time nice make bindeb-pkg -jYOUR NUMBER OF CORES HERE" to start compiling with multi-core mode.."
+echo 'You have' $CPUCORES 'cpu cores'
+echo "Ready to start compiling! Enter "time nice make bindeb-pkg -j'YOUR NUMBER OF CORES HERE'" to start compiling with multi-core mode.."
+echo ''
+read -r -p "
+###############################################################
+# deb-file creation will start. Do you want to continue?      #
+#                                                             #
+#   - Make sure configuration changes are correct!            #
+############################################################### 
+(y|Y)es (n|N)o # " input
+
+case $input in
+    [yY][eE][sS]|[yY])
+ echo "Executing..!"
+ ;;
+    [nN][oO]|[nN])
+ echo "No, we stop here.."
+ exit 1
+       ;;
+    *)
+ echo "Invalid selection input.. ..aborting!"
+ exit 1
+ ;;
+esac
+
+time nice make bindeb-pkg -j'$CPUCORES'
 echo 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section'
