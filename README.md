@@ -62,7 +62,7 @@ These are the steps you need to take:
 -->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
 
 # Kernel 5.18.x
-Has the ASHMEM module removed completely. Therefore we need to reverse that cnange until Anbox switches to MEMFD instead of ASHMEM.
+Has the ASHMEM module removed completely. Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.
 
 Steps to do that:
 - Download the patch file and apply it reversed
