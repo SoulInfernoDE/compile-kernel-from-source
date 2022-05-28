@@ -74,6 +74,11 @@ patch -R -p1 -f enable_ashmem.patch
 - You can also create a reverse patch permanently with this command:
 interdiff -q file.patch /dev/null > reversed.patch
 
+commands:
+1. wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
+2. interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
+3. patch -p1 -i enable_ashmem.patch
+
 Automation of this process will be done when i have time for it
 
 
