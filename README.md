@@ -49,6 +49,7 @@ You can also look on https://kernel.org/ if you are unsure and want the latest k
 sudo dpkg -i ../linux-*.deb
 
 4. After installing the kernel you may need to sign it for booting with UEFI / Secure Boot.
+-->> Go Here for a script which can assist you: https://github.com/SoulInfernoDE/compile-kernel-from-source#generate-mok-file-and-sign-your-kernel-with-automation-script
 5. Base reading article is: https://github.com/jakeday/linux-surface/blob/3267e4ea1f318bb9716d6742d79162de8277dea2/SIGNING.md
 
 ::: Summary what will be done :::
