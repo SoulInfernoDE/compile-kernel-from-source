@@ -11,7 +11,7 @@ sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev lib
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
 mkdir kernel # We create a work directory folder
-read -p "Which kernel version do you want to compile? (example: 5.18.1) " KERNEL_VERSION
+read -p "Which kernel version do you want to compile? (example: 5.18.7) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
 wget 'https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-'$KERNEL_VERSION'.tar.xz'
 tar xvf linux-* -C kernel/ --strip-components=1 # unpacking the tar.xz to the kernel folder
@@ -38,10 +38,12 @@ wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/
 echo 'merging new android options into the .config file:'
 make olddefconfig # we have added the ANDROID lines at the end of the config file, however we re-generate the config file again to maintain the correct structure
 echo 'You have' $CPUCORES 'cpu cores'
-echo "Ready to start compiling! Enter 'time nice make bindeb-pkg' -j'YOUR NUMBER OF CORES HERE' to start compiling with multi-core mode.."
 echo ''
 read -r -p "
 ###############################################################
+#                Ready to start compiling!                    #
+# To manually compile enter: time nice make bindeb-pkg -j'$CPUCORES'  #
+#                                                             #
 # deb-file creation will start. Do you want to continue?      #
 #                                                             #
 #   - Make sure configuration changes are correct!            #
