@@ -10,6 +10,9 @@ echo 'Installing dependencies'
 sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
+#if the external modules have been installed we remove it here.. ..they will be burned into the kernel directly while building from source
+sudo dkms remove -m anbox-ashmem/1 --all 2> /dev/null
+sudo dkms remove -m anbox-binder/1 --all 2> /dev/null
 mkdir kernel # We create a work directory folder
 read -p "Which kernel version do you want to compile? (example: 5.18.7) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
