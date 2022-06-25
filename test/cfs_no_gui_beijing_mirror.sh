@@ -24,7 +24,7 @@ echo 'Reverting the removal patch code..'
 interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
 echo ''
 echo 'Patching the kernel sources to bring back ASHMEM..'
-patch -p1 -i enable_ashmem.patch
+patch -p1 -N -i enable_ashmem.patch
 echo ''
 echo 'DONE! ASHMEM is now selectable again in your kernel .config file! NOTE: THIS MAY BREAK ANYTIME AS ASHMEM IS REPLACED WITH MEMFD'
 echo 'which is not supported by Anbox yet..'
