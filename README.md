@@ -3,7 +3,7 @@ Scripts to be able to automate compiling procedures. Eg. if you need to add .con
 
 Can be used to address the anbox modules issue, explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944
 
-Everything is work in progress ..
+Everything is work in progress .. (Should be working though as expected now..)
 
 # Explanation of the scripts:
 createscriptenv.sh
