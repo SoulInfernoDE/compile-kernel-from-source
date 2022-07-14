@@ -36,7 +36,7 @@ if [ -d "$FILE" ]; then
     exit
 else
     echo $(green "$FILE does not exist and will be created now.") #If the .scripts folder doesn't exist we create it and link it in the ~/.bashrc file. So we can type the script name whenever we want to when placed in ~/.scripts..
-    mkdir ~/.testscripts
+    mkdir ~/.scripts
     echo ""
     echo $(blue "Done. Linking the .scripts folder to your Terminal|Bash ..")
     echo export 'PATH=$PATH":$HOME/.scripts"' >>~/.bashrc
