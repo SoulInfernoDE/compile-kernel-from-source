@@ -45,7 +45,7 @@ echo ''
 read -r -p "
 ###############################################################
 #                Ready to start compiling!                    #
-# To manually compile enter: time nice make bindeb-pkg -j'$CPUCORES'  #
+# To manually compile enter: time nice make bindeb-pkg -j$CPUCORES    #
 #                                                             #
 # deb-file creation will start. Do you want to continue?      #
 #                                                             #
