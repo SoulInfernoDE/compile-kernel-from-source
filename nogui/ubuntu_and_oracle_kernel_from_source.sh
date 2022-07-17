@@ -88,7 +88,7 @@ make olddefconfig # we have added the ANDROID lines at the end of the config fil
 echo ''
 echo $(yellow 'You have '$CPUCORES' cpu cores')
 echo ''
-echo $(yellow 'Ready to start compiling! Manually enter anytime you want to restart compiling: time nice make bindeb-pkg -j'$CPUCORES'')
+echo $(yellow 'Ready to start compiling! Manually enter anytime you want to restart compiling: time nice make bindeb-pkg -j$CPUCORES')
 echo ''
 read -r -p "
 ###############################################################
@@ -112,7 +112,7 @@ case $input in
  ;;
 esac
 
-time nice make bindeb-pkg -j'$CPUCORES' # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
+time nice make bindeb-pkg -j$CPUCORES # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
 
 read -r -p "
 ###############################################################
