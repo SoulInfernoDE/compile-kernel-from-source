@@ -6,9 +6,9 @@ sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev lib
 cd ~/Downloads
 rm linux-*.tar.xz 2> /dev/null
 mkdir kernel
-read -p "Which kernel version do you want to compile? (example: 5.17.5) " KERNEL_VERSION
+read -p "Which kernel version do you want to compile? (example: 6.x) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
-wget 'https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-'$KERNEL_VERSION'.tar.xz'
+wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
 tar xvf linux-* -C kernel/ --strip-components=1
 cd kernel
 cp /boot/config-$(uname -r) ./.config
