@@ -84,8 +84,7 @@ commands:
 2. interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
 3. patch -p1 -i enable_ashmem.patch
 
-Updated the scripts to patch ashmem module back into the sources. Now the script is untested to older versions >5.18.x.
-But i guess it should still work as the patched files are already in older sources available.
+Updated the scripts to patch ashmem module back into the sources. It checks if ashmem is code is already present and skips the patchset if it's not needed.
 
 
 # Generate MOK file and sign your kernel with automation script:
