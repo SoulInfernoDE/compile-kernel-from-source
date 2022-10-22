@@ -37,7 +37,7 @@ echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_andro
 wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/.config-fragment
 # Using terminal script from torvalds to modify the needed lines into the .config file found in the kernel sources under kernel/scripts/kconfig/merge_config.sh
 # Merge IP fragment CONFIG_ settings into the main .config file
-.$CPATH/kernel/scripts/kconfig/merge_config.sh .config .config-fragment
+$CPATH/kernel/scripts/kconfig/./merge_config.sh .config .config-fragment
 echo 'merging new android options into the .config file:'
 make olddefconfig # we have added the ANDROID lines at the end of the config file, however we re-generate the config file again to maintain the correct structure
 echo 'You have' $CPUCORES 'cpu cores'
