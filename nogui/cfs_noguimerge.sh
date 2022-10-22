@@ -34,7 +34,7 @@ echo 'which is not supported by Anbox yet..'
 make olddefconfig # we re-generate the copied config file to update new lines in newer kernel versions with the pre-defined default answer
 echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_android has been created..'
 # Downloading the merge fragments file - if you need this changed create a pull request
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/main/nogui/.config-fragment
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v5.x/nogui/.config-fragment
 # Using terminal script from torvalds to modify the needed lines into the .config file found in the kernel sources under kernel/scripts/kconfig/merge_config.sh
 # Merge IP fragment CONFIG_ settings into the main .config file
 ./scripts/kconfig/merge_config.sh .config .config-fragment
