@@ -25,11 +25,16 @@ sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
 sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
 sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
 sudo dkms install anbox-ashmem/1
+echo ''
 sudo modprobe ashmem_linux
+echo ''
 sudo mkdir /dev/binder
+sudo mount -t binder binder /dev/binder
 echo ''
 sudo lsmod | grep -e ashmem_linux -e binder_linux
+echo ''
 sudo ls -alh /dev/binder /dev/ashmem
+echo ''
 cd $CPATH
 echo ''
 echo ''
