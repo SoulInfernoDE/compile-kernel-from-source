@@ -17,7 +17,10 @@ mkdir kernel # We create a work directory folder
 echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
 wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
 mkdir anboxashmem
-tar xvf ashmemk6.tar.xz -C anboxashmem/ --strip-components=1
+cd $CPATH/anboxashmem
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
+tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
+patch -p1 -i ashmemsourcefix6x.patch
 sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
 sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
 sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
