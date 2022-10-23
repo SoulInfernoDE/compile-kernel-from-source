@@ -26,9 +26,13 @@ sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
 sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
 sudo dkms install anbox-ashmem/1
 sudo modprobe ashmem_linux
-lsmod | grep -e ashmem_linux
-ls -alh /dev/binder /dev/ashmem
+sudo mkdir /dev/binder
+echo ''
+sudo lsmod | grep -e ashmem_linux -e binder_linux
+sudo ls -alh /dev/binder /dev/ashmem
 cd $CPATH
+echo ''
+echo ''
 read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
