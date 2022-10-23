@@ -14,6 +14,18 @@ rm linux-*.tar.xz 2> /dev/null
 sudo dkms remove -m anbox-ashmem/1 --all 2> /dev/null
 sudo dkms remove -m anbox-binder/1 --all 2> /dev/null
 mkdir kernel # We create a work directory folder
+echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
+mkdir anboxashmem
+tar xvf ashmemk6.tar.xz -C anboxashmem/ --strip-components=1
+sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
+sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
+sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
+sudo dkms install anbox-ashmem/1
+sudo modprobe ashmem_linux
+lsmod | grep -e ashmem_linux
+ls -alh /dev/binder /dev/ashmem
+cd $CPATH
 read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
@@ -31,6 +43,8 @@ patch -p1 -N -i enable_ashmem.patch
 echo ''
 echo 'DONE! ASHMEM is now selectable again in your kernel .config file! NOTE: THIS MAY BREAK ANYTIME AS ASHMEM IS REPLACED WITH MEMFD'
 echo 'which is not supported by Anbox yet..'
+echo ''
+echo ''
 make olddefconfig # we re-generate the copied config file to update new lines in newer kernel versions with the pre-defined default answer
 echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_android has been created..'
 # Downloading the merge fragments file - if you need this changed create a pull request
