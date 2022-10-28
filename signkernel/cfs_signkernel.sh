@@ -37,10 +37,10 @@ read -r -p "
 # custom kernel signing script v0.1a @github.com/SoulInfernoDE #
 ################################################################
 # This will help you generate and install your own UEFI key    #
-# into your linux and bios.    $(green 'Do you want to continue?')        #
-#  $(red '- If you already generated your key, skip this step to')      #
-#    $(red 'just sign your kernel with your previously generated MOK')  #
-#    $(red 'file!')                                                     #
+# into your linux and bios.    $(red 'Do you want to continue?')        #
+#  $(green '- If you already generated your key, skip this step to')      #
+#    $(green 'just sign your kernel with your previously generated MOK')  #
+#    $(green 'file!')                                                     #
 ################################################################ 
 (y|Y)es (n|N)o # " input
 
