@@ -10,7 +10,7 @@ createscriptenv.sh
 
 Adds the ability to use my scripts directly in your bash/terminal by just typing the scripts name. Make sure you copy your/my scripts to your ~/.scripts folder. (I will be extending this script somehow sometime to update-check itself and offer a installation menu for my scripts. I really love creating workflow that enables to speed up things that beeing frequently used..)
 
-cfs_nogui.sh and cfs_noguimerge.sh
+cfs_nogui.sh (deprecated) and cfs_noguimerge.sh
 
 It automates the steps to compile your kernel on ubuntu/debian based systems (such as linux mint for example) while asking
 the user some questions interactively

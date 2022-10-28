@@ -11,9 +11,33 @@ sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev lib
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
 mkdir kernel
-read -p "Which kernel version do you want to compile? (example: 5.17.5) " KERNEL_VERSION
+echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
+mkdir anboxashmem
+cd $CPATH/anboxashmem
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
+tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
+patch -p1 -i ashmemsourcefix6x.patch
+sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
+sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
+sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
+sudo dkms install anbox-ashmem/1
+echo ''
+sudo modprobe ashmem_linux
+echo ''
+sudo mkdir /dev/binder
+sudo mount -t binder binder /dev/binder
+echo ''
+sudo lsmod | grep -e ashmem_linux -e binder_linux
+echo ''
+sudo ls -alh /dev/binder /dev/ashmem
+echo ''
+cd $CPATH
+echo ''
+echo ''
+read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
 echo 'kernel version you entered: '$KERNEL_VERSION'_android'
-wget 'https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-'$KERNEL_VERSION'.tar.xz'
+wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
 tar xvf linux-* -C kernel/ --strip-components=1
 cd kernel
 cp /boot/config-$(uname -r) ./.config
@@ -23,10 +47,10 @@ echo ''
 echo 'Reverting the removal patch code..'
 interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
 echo ''
-echo 'Patching the kernel sources to bring back ASHMEM..'
+echo 'Trying to pat the kernel sources to bring back ASHMEM..'
 patch -p1 -N -i enable_ashmem.patch
 echo ''
-echo 'DONE! ASHMEM is now selectable again in your kernel .config file! NOTE: THIS MAY BREAK ANYTIME AS ASHMEM IS REPLACED WITH MEMFD'
+echo 'DONE! ASHMEM should now be selectable again in your kernel .config file! NOTE: THIS MAY BREAK ANYTIME AS ASHMEM IS REPLACED WITH MEMFD AND MOST LIKELY IS ALREADY NOT WORKING WITH KERNEL ANYMORE v6.x'
 echo 'which is not supported by Anbox yet..'
 make olddefconfig
 echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_android has been created..'
