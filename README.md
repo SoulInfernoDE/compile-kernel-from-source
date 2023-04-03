@@ -1,4 +1,33 @@
-# compile-kernel-from-source
+# For which linux distributions are these scripts ?
+
+Actually only for Ubuntu / Debian based linux systems
+I have not planned to update the scripts for other linux systems like manjaro, kali etc..
+
+# What is this !?
+If you want to have the latest linux kernel running you often need to compile it yourself as the standard kernels are most of the time not up to date.
+
+Also if you want to add something to your kernel then you need to recompile it with the compile options enabled for it. (For example android module like 'binder')
+It makes sense to try a new stable kernel version in combination with the new module so you can profit from all the new features and updates of the newer kernel version..
+
+You have two options to do do:
+
+- Compile the kernel yourself step by step which needs some knowledge about it and time from start to finish..
+- You could use these scripts if you like to which will type the terminal commands automated for you one after another
+
+If you compile the kernel yourself you most likely want to update later on the same way. Thus you need to retype everything from start to finish.
+The script makes it easier to redo everything very fast.
+
+# Will this burn my computer or destroy my linux system !?
+Most likely not. Linux is able to have multiple kernels installed at the same time!
+If your kernel doesn't boot your linux system, restart your computer and select advanced options in grub bootmenu. Then just select the older kernel that works for you. Now you can delete unused kernels and try again if you like to..
+
+
+# I need this script for other linux distros!
+- You may want to have a look at the script itself with a text editor together with the wiki website of your linux distribution
+- You could create a issue here and nicely ask for it - if more people are interested in it for other distros i MAY do it in my spare time...
+- You could fork this repo and recreate it for your distro and pull request the new script back to here so we get a script collection from the community
+
+# compile-kernel-from-source contains:
 Scripts to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (ASHMEM, BINDER, etc.)
 
 Can be used to address the anbox modules issue, explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944
