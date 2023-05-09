@@ -9,7 +9,7 @@ If you want to have the latest linux kernel running you often need to compile it
 Also if you want to add something to your kernel then you need to recompile it with the compile options enabled for it. (For example android module like 'binder')
 It makes sense to try a new stable kernel version in combination with the new module so you can profit from all the new features and updates of the newer kernel version..
 
-You have two options to do do:
+You have two options to do so:
 
 - Compile the kernel yourself step by step which needs some knowledge about it and time from start to finish..
 - You could use these scripts if you like to which will type the terminal commands automated for you one after another
