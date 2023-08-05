@@ -1,5 +1,6 @@
 #!/bin/bash
 
+mkdir -p ~/Downloads
 # Save the number of your cores to the variable CPUCORES
 CPUCORES=$(nproc)
 # You can change this variable to compile in any other folder
