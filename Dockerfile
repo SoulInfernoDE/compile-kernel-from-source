@@ -53,3 +53,11 @@ RUN apt-get dist-upgrade --yes
 ###################################
 
 RUN apt-get --yes install mint-dev-tools build-essential devscripts fakeroot quilt dh-make automake libdistro-info-perl less nano ubuntu-dev-tools python3
+
+###################################
+# Make compile script executable
+# and run it
+###################################
+
+RUN chmod +x /cfs_noguimerge.sh
+RUN cfs_noguimerge.sh
