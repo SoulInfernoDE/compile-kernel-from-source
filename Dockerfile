@@ -12,7 +12,7 @@ RUN apt-get --yes install wget gnupg locales unzip libfile-fcntllock-perl
 RUN echo "de_DE.UTF-8 UTF-8" >> /etc/locale.gen
 RUN locale-gen
 ENV LANG de_DE.UTF-8
-ENV LANGUAGE de_DE:en
+ENV LANGUAGE de_DE:de
 ENV LC_ALL de_DE.UTF-8
 
 # Add GHR
