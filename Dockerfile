@@ -24,8 +24,9 @@ RUN \
 
 # Add files.
 ADD mint21.2 /
-RUN wget -P / https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/dockercompile/nogui/cfs_noguimerge.sh \
-&&  chmod +x /cfs_noguimerge.sh
+ADD nogui/cfs_noguimerge.sh /
+ADD config/config ~/Downloads/kernel/.config
+RUN chmod +x /cfs_noguimerge.sh
 
 ###################################
 # Set up repositories
@@ -55,8 +56,8 @@ RUN apt-get dist-upgrade --yes
 
 RUN apt-get --yes install mint-dev-tools build-essential devscripts fakeroot quilt dh-make automake libdistro-info-perl less nano ubuntu-dev-tools python3
 
-###################################
-# run the compilefromsource script
-###################################
+####################################
+# run the compile from source script
+####################################
 
 RUN cfs_noguimerge.sh
