@@ -15,24 +15,25 @@ rm linux-*.tar.xz 2> /dev/null
 #if the external modules have been installed we remove it here.. ..they will be burned into the kernel directly while building from source
 sudo dkms remove -m anbox-ashmem/1 --all 2> /dev/null
 sudo dkms remove -m anbox-binder/1 --all 2> /dev/null
-mkdir kernel # We create a work directory folder
-echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
-mkdir anboxashmem
-cd $CPATH/anboxashmem
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
-tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
-patch -p1 -i ashmemsourcefix6x.patch
-sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
-sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
-sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
-sudo dkms install anbox-ashmem/1
-echo ''
-sudo modprobe ashmem_linux
-echo ''
-sudo mkdir /dev/binder
-sudo mount -t binder binder /dev/binder
-echo ''
+mkdir -p kernel # We create a work directory folder
+# Removed ashmemsource fix and using the one provided by chris
+# echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
+# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
+# mkdir anboxashmem
+# cd $CPATH/anboxashmem
+# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
+# tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
+# patch -p1 -i ashmemsourcefix6x.patch
+# sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
+# sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
+# sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
+# sudo dkms install anbox-ashmem/1
+# echo ''
+# sudo modprobe ashmem_linux
+# echo ''
+sudo mkdir -p /dev/binder
+# sudo mount -t binder binder /dev/binder
+# echo ''
 sudo lsmod | grep -e ashmem_linux -e binder_linux
 echo ''
 sudo ls -alh /dev/binder /dev/ashmem
@@ -46,7 +47,9 @@ echo ''
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
 tar xvf linux-* -C kernel/ --strip-components=1 # unpacking the tar.xz to the kernel folder
 cd kernel # we open the kernel folder
-cp /boot/config-$(uname -r) ./.config # we copy your current configuration file from /boot/config to the kernel folder and rename it to .config
+# We are using the config file from our github repo for docker
+mkdir -p /boot
+# cp /boot/config-$(uname -r) ./.config # we copy your current configuration file from /boot/config to the kernel folder and rename it to .config
 echo 'Downloading the ASHMEM source code removal patch from upstream'
 wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
 echo ''
