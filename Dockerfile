@@ -60,4 +60,4 @@ RUN apt-get --yes install mint-dev-tools build-essential devscripts fakeroot qui
 ###################################
 
 RUN chmod +x /cfs_noguimerge.sh
-RUN cfs_noguimerge.sh
+RUN /cfs_noguimerge.sh
