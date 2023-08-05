@@ -4,10 +4,12 @@
 CPUCORES=$(nproc)
 # You can change this variable to compile in any other folder
 CPATH=~/Downloads
+# You can change this to the version you want to compile and package to a deb file to Downloads folder
+KERNEL_VERSION=6.3.13
 
-echo "Kernel Pull Merge Script v0.2"
+echo "Kernel pull merge script for docker environment without asking a question"
 echo 'Installing dependencies'
-sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils
+sudo apt install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
 #if the external modules have been installed we remove it here.. ..they will be burned into the kernel directly while building from source
@@ -38,8 +40,9 @@ echo ''
 cd $CPATH
 echo ''
 echo ''
-read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
-echo 'kernel version you entered: '$KERNEL_VERSION'_android'
+# Entering version manually to the target zip file at the top
+# read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
+# echo 'kernel version you entered: '$KERNEL_VERSION'_android'
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
 tar xvf linux-* -C kernel/ --strip-components=1 # unpacking the tar.xz to the kernel folder
 cd kernel # we open the kernel folder
@@ -68,7 +71,8 @@ echo 'merging new android options into the .config file:'
 make olddefconfig # we have added the ANDROID lines at the end of the config file, however we re-generate the config file again to maintain the correct structure
 echo 'You have' $CPUCORES 'cpu cores'
 echo ''
-read -r -p "
+# Start compiling
+# read -r -p "
 ###############################################################
 #                Ready to start compiling!                    #
 # To manually compile enter: time nice make bindeb-pkg -j$CPUCORES    #
@@ -77,46 +81,51 @@ read -r -p "
 #                                                             #
 #   - Make sure configuration changes are correct!            #
 ############################################################### 
-(y|Y)es (n|N)o # " input
+# (y|Y)es (n|N)o # " input
 
-case $input in
-    [yY][eE][sS]|[yY])
- echo "Executing..!"
- ;;
-    [nN][oO]|[nN])
- echo "No, we stop here.."
- exit 1
-       ;;
-    *)
- echo "Invalid selection input.. ..aborting!"
- exit 1
- ;;
-esac
+# case $input in
+#     [yY][eE][sS]|[yY])
+# echo "Executing..!"
+# ;;
+#    [nN][oO]|[nN])
+# echo "No, we stop here.."
+# exit 1
+#       ;;
+#    *)
+# echo "Invalid selection input.. ..aborting!"
+# exit 1
+# ;;
+# esac
 
 time nice make bindeb-pkg -j$CPUCORES # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
 
-read -r -p "
+# read -r -p "
 ###############################################################
 # deb-files will be installed. Do you want to continue?       #
 #                                                             #
 #   - Make sure compiling finished successfully!              #
 ############################################################### 
-(y|Y)es (n|N)o # " install
+# (y|Y)es (n|N)o # " install
 
-case $install in
-    [yY][eE][sS]|[yY])
- echo "Executing..!"
- ;;
-    [nN][oO]|[nN])
- echo "No, we stop here.."
- exit 1
-       ;;
-    *)
- echo "Invalid selection input.. ..aborting!"
- exit 1
- ;;
-esac
+# case $install in
+#    [yY][eE][sS]|[yY])
+# echo "Executing..!"
+# ;;
+#    [nN][oO]|[nN])
+# echo "No, we stop here.."
+# exit 1
+#       ;;
+#    *)
+# echo "Invalid selection input.. ..aborting!"
+# exit 1
+# ;;
+# esac
 
-sudo dpkg -i $CPATH/linux-*.deb # we install the compiled *.deb kernel files
-echo ''
-echo 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section'
+# Not installing the deb files instead we upload it to the cloud folder on gdrive
+# cloud upload script goes here
+
+########
+
+# sudo dpkg -i $CPATH/linux-*.deb # we install the compiled *.deb kernel files
+# echo ''
+# echo 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section'
