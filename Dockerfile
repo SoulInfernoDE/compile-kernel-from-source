@@ -5,8 +5,8 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND noninteractive
 
 # Add basic tools
-RUN apt-get update
-RUN apt-get --yes install wget gnupg locales unzip libfile-fcntllock-perl
+RUN apt update
+RUN apt install -y wget gnupg locales unzip libfile-fcntllock-perl rsync apt-utils
 
 # Set locale
 RUN echo "de_DE.UTF-8 UTF-8" >> /etc/locale.gen
@@ -34,7 +34,7 @@ RUN chmod +x /cfs_noguimerge.sh
 
 # Add linuxmint-keyring
 RUN \
-   wget http://packages.linuxmint.com/pool/main/l/linuxmint-keyring/linuxmint-keyring_2016.05.26_all.deb > dev/null 2>&1 \
+   wget http://packages.linuxmint.com/pool/main/l/linuxmint-keyring/linuxmint-keyring_2016.05.26_all.deb >/dev/null \
 && dpkg -i linuxmint-keyring_2016.05.26_all.deb \
 && rm linuxmint-keyring_2016.05.26_all.deb
 
