@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Add basic tools
 RUN apt update >/dev/null
-RUN apt install -y wget curl gnupg ccrypt locales unzip libfile-fcntllock-perl rsync apt-utils >/dev/null
+RUN apt install -y wget curl gnupg ccrypt dialog locales unzip libfile-fcntllock-perl rsync apt-utils >/dev/null
 
 # Set locale
 RUN echo "de_DE.UTF-8 UTF-8" >> /etc/locale.gen
