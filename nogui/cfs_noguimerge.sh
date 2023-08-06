@@ -10,7 +10,7 @@ KERNEL_VERSION=6.3.13
 
 echo "Kernel pull merge script for docker environment without asking a question"
 echo 'Installing dependencies'
-sudo apt install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils
+sudo apt install -y dwarves fakeroot bc cpio libncurses5-dev libgtk2.0-dev libglade2-dev libncurses-dev gawk flex bison libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev libdw-dev cmake qt5ct libpackagekitqt5-dev nano >/dev/null
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
 #if the external modules have been installed we remove it here.. ..they will be burned into the kernel directly while building from source
@@ -19,10 +19,10 @@ sudo dkms remove -m anbox-binder/1 --all 2> /dev/null
 mkdir -p kernel # We create a work directory folder
 # Removed ashmemsource fix and using the one provided by chris
 # echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
-# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
+# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz 2>/dev/null
 # mkdir anboxashmem
 # cd $CPATH/anboxashmem
-# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
+# wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch 2>/dev/null
 # tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
 # patch -p1 -i ashmemsourcefix6x.patch
 # sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
@@ -45,14 +45,14 @@ echo ''
 # Entering version manually to the target zip file at the top
 # read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
 # echo 'kernel version you entered: '$KERNEL_VERSION'_android'
-wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
-tar xvf linux-* -C kernel/ --strip-components=1 # unpacking the tar.xz to the kernel folder
+wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz' 2>/dev/null
+tar xvf linux-* -C kernel/ --strip-components=1 2>/dev/null # unpacking the tar.xz to the kernel folder
 cd kernel # we open the kernel folder
 # We are using the config file from our github repo for docker
 mkdir -p /boot
 # cp /boot/config-$(uname -r) ./.config # we copy your current configuration file from /boot/config to the kernel folder and rename it to .config
 echo 'Downloading the ASHMEM source code removal patch from upstream'
-wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
+wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec 2>/dev/null
 echo ''
 echo 'Reverting the removal patch code..'
 interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
@@ -67,7 +67,7 @@ echo ''
 make olddefconfig # we re-generate the copied config file to update new lines in newer kernel versions with the pre-defined default answer
 echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_android has been created..'
 # Downloading the merge fragments file - if you need this changed create a pull request
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/.config-fragment
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/.config-fragment 2>/dev/null
 # Using terminal script from torvalds to modify the needed lines into the .config file found in the kernel sources under kernel/scripts/kconfig/merge_config.sh
 # Merge IP fragment CONFIG_ settings into the main .config file
 $CPATH/kernel/scripts/kconfig/./merge_config.sh .config .config-fragment
