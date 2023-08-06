@@ -103,6 +103,7 @@ echo ''
 
 time nice make bindeb-pkg -j$CPUCORES # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
 rm -R -f linux-$KERNEL_VERSION/
+rm linux-$KERNEL_VERSION.tar.*
 # read -r -p "
 ###############################################################
 # deb-files will be installed. Do you want to continue?       #

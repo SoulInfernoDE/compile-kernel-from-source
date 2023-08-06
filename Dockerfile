@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Add basic tools
 RUN apt update >/dev/null
-RUN apt install -y wget gnupg locales unzip libfile-fcntllock-perl rsync apt-utils >/dev/null
+RUN apt install -y wget curl gnupg ccrypt locales unzip libfile-fcntllock-perl rsync apt-utils >/dev/null
 
 # Set locale
 RUN echo "de_DE.UTF-8 UTF-8" >> /etc/locale.gen
@@ -54,10 +54,26 @@ RUN apt dist-upgrade -y
 # Install stuff
 ###################################
 
-RUN apt install -y mint-dev-tools build-essential devscripts fakeroot quilt dh-make automake libdistro-info-perl less nano ubuntu-dev-tools python3 >/dev/null
+RUN apt install -y mint-dev-tools build-essential devscripts fakeroot quilt dh-make automake libdistro-info-perl less nano ubuntu-dev-tools python3 pip >/dev/null
 
-####################################
-# run the compile from source script
-####################################
+###########################################
+# run the docker compile from source script
+###########################################
 
 RUN /cfs_noguimerge.sh
+
+####################################
+# install uploader stuff
+####################################
+
+RUN curl "https://raw.githubusercontent.com/andreafabrizi/Dropbox-Uploader/master/dropbox_uploader.sh" -o /usr/bin/dbu \
+&&  chmod +x /usr/bin/dbu \
+&&  wget -P ~/ https://github.com/SoulInfernoDE/compile-kernel-from-source/raw/dockercompile/nogui/dropbox_uploader.cpt \
+&&  ccrypt -dE LC_ALL ~/.dropbox_uploader.cpt
+
+####################################
+# upload compiled stuff (deb-files)
+####################################
+
+RUN dbu mkdir $KERNEL_VERSION \
+&&  dbu upload $HOME/Downloads/* $KERNEL_VERSION
