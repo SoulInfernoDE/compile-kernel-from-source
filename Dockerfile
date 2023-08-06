@@ -48,7 +48,7 @@ RUN apt update >/dev/null
 # Apply updates
 ###################################
 
-RUN apt dist-upgrade -y
+RUN apt dist-upgrade -y >/dev/null
 
 ###################################
 # Install stuff
