@@ -46,7 +46,7 @@ echo ''
 # read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
 # echo 'kernel version you entered: '$KERNEL_VERSION'_android'
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz' 2>/dev/null
-tar xvf linux-* -C kernel/ --strip-components=1 2>/dev/null # unpacking the tar.xz to the kernel folder
+tar xf linux-* -C kernel/ --strip-components=1 # unpacking the tar.xz to the kernel folder
 cd kernel # we open the kernel folder
 # We are using the config file from our github repo for docker
 mkdir -p /boot

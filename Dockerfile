@@ -5,7 +5,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND noninteractive
 
 # Add basic tools
-RUN apt update
+RUN apt update >/dev/null
 RUN apt install -y wget gnupg locales unzip libfile-fcntllock-perl rsync apt-utils >/dev/null
 
 # Set locale
@@ -42,7 +42,7 @@ RUN \
 RUN echo "" > /etc/apt/sources.list
 
 # Update APT cache.
-RUN apt update
+RUN apt update >/dev/null
 
 ###################################
 # Apply updates
