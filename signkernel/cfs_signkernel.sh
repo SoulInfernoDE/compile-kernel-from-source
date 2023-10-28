@@ -28,7 +28,7 @@ function bwhite {
     printf "${BWHITE}$@${NC}\n"
 }
 
-echo "Kernel Sign Script v0.1a"
+echo "Kernel Sign Script v0.2a"
 echo 'Installing dependencies'
 sudo apt install wget openssl sbsigntool mokutil
 
@@ -52,15 +52,16 @@ case $input in
  echo "Signing your kernel.."
  echo ''
  echo '' 'Here is a printout of what is installed:'
- ls /boot/vmlinuz*-android
+ sudo ls /boot/vmlinuz*
  echo ''
- read -p "Which kernel version should be signed? (example: 5.14.18) " KERNEL_VERSION
+ read -p "Which kernel version should be signed? (example: 6.5.7) " KERNEL_VERSION
  echo ''
- echo 'You have entered this version: '$KERNEL_VERSION'-android'
+ echo 'You have entered this version: '$KERNEL_VERSION'''*
  echo ''
  cd ~
- sudo sbsign --key MOK.priv --cert MOK.pem '/boot/vmlinuz-'$KERNEL_VERSION'-android' --output '/boot/vmlinuz-'$KERNEL_VERSION'-android'
+ sudo sbsign --key MOK.priv --cert MOK.pem '/boot/vmlinuz-'$KERNEL_VERSION''* --output '/boot/vmlinuz-'$KERNEL_VERSION''*
  echo ''
+ echo 'Updating your grub boot menu'
  sudo update-grub
  echo ''
  echo $(green 'All done.. - please restart your computer!')
@@ -74,7 +75,7 @@ case $input in
 esac
 
 cd ~
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/signkernel/mokconfig.cnf 2> /dev/null
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/main/signkernel/mokconfig.cnf 2> /dev/null
 openssl req -config ./mokconfig.cnf -new -x509 -newkey rsa:2048 -nodes -days 36500 -outform DER -keyout "MOK.priv" -out "MOK.der"
 echo ''
 openssl x509 -in MOK.der -inform DER -outform PEM -out MOK.pem
