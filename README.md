@@ -115,7 +115,7 @@ commands:
 
 Updated the scripts to patch ashmem module back into the sources. It checks if ashmem code is still present and skips the patchset if not needed.
 
--->> Maybe broken with latest kernels now. Dirty patches and fixes may be found at the repo from @choff (Thank you so much for tracking / fixing ashmem!)
+-->> Maybe broken with latest kernels now. Dirty patches and fixes may be found at the repo from [@choff](https://github.com/choff) (Thank you so much for tracking / fixing ashmem!)
 
 # Generate MOK file and sign your kernel with automation script:
 
