@@ -28,13 +28,17 @@ function bwhite {
     printf "${BWHITE}$@${NC}\n"
 }
 
-echo "Kernel Sign Script v0.2a"
-echo 'Installing dependencies'
-sudo apt install wget openssl sbsigntool mokutil
-
+echo ''
+echo $(green 'Kernel Sign Script v1.0 for Minisforum UM790PRO')
+echo ''
+echo $(yellow 'Installing dependencies')
+echo ''
+sudo apt-get -y install wget openssl sbsigntool mokutil
+echo $(green 'DONE!')
+echo ''
 read -r -p "
 ################################################################
-# custom kernel signing script v0.2  @github.com/SoulInfernoDE #
+# custom kernel signing script v1.0  @github.com/SoulInfernoDE #
 ################################################################
 # This will help you generate and install your own UEFI key    #
 # into your linux and bios.                                    #
@@ -49,17 +53,19 @@ read -r -p "
 
 case $input in
     [yY][eE][sS]|[yY])
- echo "mokconfing.cnf will be pulled and encrypted with openssl..!"
+ echo ''
+ echo $(yellow 'mokconfing.cnf will be pulled and encrypted with openssl..!')
+ echo ''
 ;;
     [nN][oO]|[nN])
  echo $(bwhite 'Kernel signing step..')
  echo ''
- echo '' 'Here is a printout of what is installed:'
+ echo $(yellow 'Here is a printout of what is installed:')
  sudo ls /boot/vmlinuz-*
  echo ''
 
  read -p "
-Which kernel version should be signed? (example: $(bwhite '6.7.9')) " KERNEL_VERSION
+Which kernel version should be signed? (example: $(bwhite '6.10.8')) " KERNEL_VERSION
  echo ''
  echo $(yellow 'Okay the following will be signed..')
  echo ''
@@ -83,16 +89,30 @@ Which kernel version should be signed? (example: $(bwhite '6.7.9')) " KERNEL_VER
 esac
 
 cd ~
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/main/signkernel/mokconfig.cnf 2> /dev/null
+wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/mokconfig.cnf 2> /dev/null
+echo $(green 'DONE!')
+echo ''
+echo ''
+echo $(yellow 'Generating keys from source instructions of '$HOME./mokconfig.cnf'')
 openssl req -config ./mokconfig.cnf -new -x509 -newkey rsa:2048 -nodes -days 36500 -outform DER -keyout "MOK.priv" -out "MOK.der"
 echo ''
-openssl x509 -in MOK.der -inform DER -outform PEM -out MOK.pem
+echo $(red 
+ls ~/MOK.*
+echo'')
+echo $(green 'DONE!')
 echo ''
-echo 'you will be asked for a password, which is used to encrypt and protect your key.'
-echo 'It is also needed after restart in a blue window. You can choose whatever you like..'
+echo ''
+echo 'Converting generated files to PEM format'
+openssl x509 -in MOK.der -inform DER -outform PEM -out MOK.pem
+echo $(green 'DONE!')
+echo ''
+echo 'you will now be asked for a password, which is used to encrypt and protect your certification key.'
+echo 'It is also needed after restart in a blue window. You can choose whatever you like but do not forget it..'
+echo ''
+echo ''
 sudo mokutil --import MOK.der
 echo ''
 echo $(bwhite 'Your generated key has been enrolled to your UEFI bios. Please re-run the script and select -NO- then sign the kernel before you reboot!')
 echo ''
-echo $(red 'After restart you will get a blue window which is called MOK Manager. Please select Import, Import Key, then enter your selected password you generated for your key!')
+echo $(red 'After restart you will get a blue window which is called MOK Manager. Please select Import, Import Key, then enter your selected password you generated for your certificate key!')
 echo ''
