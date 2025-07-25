@@ -28,9 +28,9 @@ If your kernel doesn't boot your linux system, restart your computer and select 
 - You could fork this repo and recreate it for your distro and pull request the new script back to here so we get a script collection from the community
 
 # compile-kernel-from-source contains:
-Scripts to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (ASHMEM, BINDER, etc.)
+Scripts to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (<del>ASHMEM</del>, BINDER, etc.)
 
-Can be used to address the anbox modules issue, explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944
+Can be used to address the <del>anbox</del> waydroid modules issue. <del>explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944</del>
 
 Everything is work in progress .. (Should be working though as expected now..)
 
@@ -39,7 +39,7 @@ createscriptenv.sh
 
 Adds the ability to use my scripts directly in your bash/terminal by just typing the scripts name. Make sure you copy your/my scripts to your ~/.scripts folder. (I will be extending this script somehow sometime to update-check itself and offer a installation menu for my scripts. I really love creating workflow that enables to speed up things that beeing frequently used..)
 
-cfs_nogui.sh (deprecated) and cfs_noguimerge.sh
+<del>cfs_nogui.sh</del> (deprecated) and cfs_noguimerge.sh
 
 It automates the steps to compile your kernel on ubuntu/debian based systems (such as linux mint for example) while asking
 the user some questions interactively
@@ -50,7 +50,7 @@ Same as the no GUI version but you will get a graphical interface which lets you
 Here you need to activate all those 'android' and 'ashmem' options yourself. Make sure to do so or you will miss the ashmem and binder modules in your kernel..
 
 Change these configuration parameters manually in the gui version and save it:
-CONFIG_ASHMEM=y
+<del>CONFIG_ASHMEM=y</del> (it is already removed from the kernel tree completely!)
 CONFIG_ANDROID=y
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDERFS=y
@@ -96,7 +96,7 @@ These are the steps you need to take:
 -->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
 
 # Kernel 5.18+ and 6.x+
-Has the ASHMEM module removed completely. Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.
+Has the ASHMEM module removed completely. <del>Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.
 
 Steps to do that:
 - Download the patch file and apply it reversed
@@ -113,7 +113,7 @@ commands:
 2. interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
 3. patch -p1 -i enable_ashmem.patch
 
-Updated the scripts to patch ashmem module back into the sources. It checks if ashmem code is still present and skips the patchset if not needed.
+Updated the scripts to patch ashmem module back into the sources. It checks if ashmem code is still present and skips the patchset if not needed.</del>
 
 -->> Maybe broken with latest kernels now. Dirty patches and fixes may be found at the repo from [@choff](https://github.com/choff) (Thank you so much for tracking / fixing ashmem!)
 
