@@ -2,7 +2,6 @@
 # Create color functions for text colors
 RED='\033[1;31m'
 GREEN='\033[0;32m'
-BROWN='\033[0;33m'
 BLUE='\033[0;34m'
 BWHITE='\033[1;37m'
 NC='\033[0m' # No Color
@@ -15,10 +14,6 @@ function green {
     printf "${GREEN}$@${NC}\n"
 }
 
-function brown {
-    printf "${BROWN}$@${NC}\n"
-}
-
 function blue {
     printf "${BLUE}$@${NC}\n"
 }
@@ -27,15 +22,15 @@ function bwhite {
     printf "${BWHITE}$@${NC}\n"
 }
 
-echo $(green 'Scripts environment creation v0.1a by github.com/SoulInfernoDE')
+echo $(green 'Scripts environment creation v1.0 by github.com/SoulInfernoDE')
 
 #check if .scripts folder exists already in ~/
-FILE=~/.scripts
-if [ -d "$FILE" ]; then
-    echo $(red "$FILE already exists. Exiting.")
+FOLDER=~/.scripts
+if [ -d "$FOLDER" ]; then
+    echo $(red "$FOLDER already exists. Exiting.")
     exit
 else
-    echo $(green "$FILE does not exist and will be created now.") #If the .scripts folder doesn't exist we create it and link it in the ~/.bashrc file. So we can type the script name whenever we want to when placed in ~/.scripts..
+    echo $(green "$FOLDER does not exist and will be created now.") #If the .scripts folder doesn't exist we create it and link it in the ~/.bashrc file. So we can type the script name whenever we want to when placed in ~/.scripts..
     mkdir ~/.scripts
     echo ""
     echo $(blue "Done. Linking the .scripts folder to your Terminal|Bash ..")
