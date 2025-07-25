@@ -96,24 +96,7 @@ These are the steps you need to take:
 -->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
 
 # Kernel 5.18+ and 6.x+
-Has the ASHMEM module removed completely. <del>Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.
-
-Steps to do that:
-- Download the patch file and apply it reversed
-  https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
-- Save it to your kernel directory with the name enable_ashmem.patch
-- Use this command to apply it before you build your kernel:
-patch -R -p1 -f enable_ashmem.patch
-
-- You can also create a reverse patch permanently with this command:
-interdiff -q file.patch /dev/null > reversed.patch
-
-commands:
-1. wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
-2. interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
-3. patch -p1 -i enable_ashmem.patch
-
-Updated the scripts to patch ashmem module back into the sources. It checks if ashmem code is still present and skips the patchset if not needed.</del>
+Has the ASHMEM module removed completely. <del>Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.</del>
 
 -->> Maybe broken with latest kernels now. Dirty patches and fixes may be found at the repo from [@choff](https://github.com/choff) (Thank you so much for tracking / fixing ashmem!)
 
