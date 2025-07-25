@@ -47,7 +47,7 @@ the user some questions interactively
 cfs_gui.sh
 
 Same as the no GUI version but you will get a graphical interface which lets you change your config file before you re-build your kernel.
-Here you need to activate all those 'android' <del>and 'ashmem'</del> options yourself. Make sure to do so or you will miss the ashmem and binder modules in your kernel..
+Here you need to activate all those 'android' <del>and 'ashmem'</del> options yourself. Make sure to do so or you will miss the <del>ashmem and</del> binder module in your kernel..
 
 Change these configuration parameters manually in the gui version and save it:
 <del>CONFIG_ASHMEM=y</del> (it is already removed from the kernel tree completely!)
