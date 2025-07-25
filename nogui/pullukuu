@@ -56,7 +56,7 @@ function flshgreen {
 
 echo ''
 echo ''
-echo  $(green 'Kernel Pull Merge Script v1.0 for Minisforum UM790Pro')
+echo  $(green 'Kernel Pull Merge Script v1.01 for Minisforum UM890Pro')
 echo ''
 echo $(yellow 'Silently installing dependencies..')
 sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils > /dev/null
@@ -104,7 +104,7 @@ echo ''
 echo ''
 echo $(blue 'Downloading the merge fragments file: .config-fragment - if you need some lines changed or added please create a pull request')
 echo ''
-wget 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment'
+wget 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/um890pro/nogui/.config-fragment'
 echo $(green 'DONE!')
 echo ''
 echo ''
@@ -187,6 +187,6 @@ echo ''
 echo $(green 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section')
 echo ''
 echo $(red 'If you are using uefi hardware with secure boot you MUST sign your kernel with a generated signature to be able to boot the new kernel!')
-echo $(red 'You can use https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/signukuu for this if you wish!')
+echo $(red 'You can use https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/um890pro/signkernel/signukuu for this if you wish!')
 echo ''
 echo ''
