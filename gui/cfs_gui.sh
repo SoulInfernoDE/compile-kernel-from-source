@@ -5,76 +5,128 @@ CPUCORES=$(nproc)
 # You can change this variable to compile in any other folder
 CPATH=~/Downloads
 
-echo "Kernel Pull Script v0.1a"
-echo 'Installing dependencies'
-sudo apt install git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patchutils
+# Color functions for text colors
+RED='\033[1;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+BWHITE='\033[1;37m'
+ITAL='\033[3;37m\033[1;37m'
+ITALYELL='\033[3;37m\033[1;37m\033[3;33m'
+FLSH='\033[1;5m'
+FLSHGREEN='\033[0;32m\033[1;5m'
+NC='\033[0m' # No Color
+
+function red {
+    printf "${RED}$@${NC}\n"
+}
+
+function green {
+    printf "${GREEN}$@${NC}\n"
+}
+
+function yellow {
+    printf "${YELLOW}$@${NC}\n"
+}
+
+function blue {
+    printf "${BLUE}$@${NC}\n"
+}
+
+function bwhite {
+    printf "${BWHITE}$@${NC}\n"
+}
+
+function ital {
+    printf "${ITAL}$@${NC}\n"
+
+}
+
+function italyell {
+    printf "${ITALYELL}$@${NC}\n"
+}
+
+function flsh {
+    printf "${FLSH}$@${NC}\n"
+}
+
+function flshgreen {
+    printf "${FLSHGREEN}$@${NC}\n"
+}
+
+echo ''
+echo ''
+echo  $(green 'Kernel Pull Merge Script v1.1 for generic builds with graphical interface to configure the kernel settings before building')
+echo ''
+echo $(yellow 'Silently installing dependencies..')
+sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils > /dev/null
 cd $CPATH
 rm linux-*.tar.xz 2> /dev/null
-mkdir kernel
-echo 'Pulling ashmemk6.tar.xz source from anbox-modules fork'
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemk6.tar.xz
-mkdir anboxashmem
-cd $CPATH/anboxashmem
-wget https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/v6.x/nogui/ashmemsourcefix6x.patch
-tar xvf $CPATH/ashmemk6.tar.xz -C $CPATH/anboxashmem/ --strip-components=1
-patch -p1 -i ashmemsourcefix6x.patch
-sudo cp -rT $CPATH/anboxashmem/ /usr/src/anbox-ashmem-1
-sudo cp $CPATH/anboxashmem/anbox.conf /etc/modules-load.d/
-sudo cp $CPATH/anboxashmem/99-anbox.rules /lib/udev/rules.d/
-sudo dkms install anbox-ashmem/1
-echo ''
-sudo modprobe ashmem_linux
-echo ''
-sudo mkdir /dev/binder
-sudo mount -t binder binder /dev/binder
-echo ''
-sudo lsmod | grep -e ashmem_linux -e binder_linux
-echo ''
-sudo ls -alh /dev/binder /dev/ashmem
-echo ''
-cd $CPATH
+#if the external modules have been installed we remove it here..
+sudo dkms remove -m anbox-ashmem/1 --all 2> /dev/null
+sudo dkms remove -m anbox-binder/1 --all 2> /dev/null
+rm -R -f ''$CPATH'/kernel' 2> /dev/null
+mkdir kernel # We create a work directory folder
+# clear
 echo ''
 echo ''
-read -p "Which kernel version do you want to compile? (example: 6.0.3) " KERNEL_VERSION
-echo 'kernel version you entered: '$KERNEL_VERSION'_android'
+echo $(ital 'make sure this folder does not contain any kernel files before proceeding')
+echo $(ital 'as tar will otherwise fail to correctly unpack files to the')
+echo $(ital 'work directory we just created:')
+echo ''
+echo $(red ''$CPATH'')
+echo ''
+read -p " $(italyell 'Which kernel version do you want to compile?') example: $(italyell '6.15.8') -->> " KERNEL_VERSION
+echo ''
+echo $(ital 'kernel version you selected to compile from source: '$KERNEL_VERSION'')
+echo ''
+echo ''
+echo $(italyell 'Downloading source code for kernel version: '$KERNEL_VERSION' from: https://kernel.org')
+echo ''
 wget 'https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-'$KERNEL_VERSION'.tar.xz'
-tar xvf linux-* -C kernel/ --strip-components=1
-cd kernel
-cp /boot/config-$(uname -r) ./.config
-echo 'Downloading the ASHMEM source code removal patch from upstream'
-wget -O remove_ashmem.patch https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=721412ed3d819e767cac2b06646bf03aa158aaec
+echo $(green 'DONE!')
 echo ''
-echo 'Reverting the removal patch code..'
-interdiff -q remove_ashmem.patch /dev/null > enable_ashmem.patch
 echo ''
-echo 'Trying to pat the kernel sources to bring back ASHMEM..'
-patch -p1 -N -i enable_ashmem.patch
+echo $(italyell 'unpacking the source code tar.xz file from: https://kernel.org to the kernel source build work directory:')
+echo $(ital ''$CPATH'/kernel')
+tar xvf linux-* -C kernel/ --strip-components=1 > /dev/null # unpacking the tar.xz to the kernel folder
+cd kernel # we open the kernel folder
 echo ''
-echo 'DONE! ASHMEM should now be selectable again in your kernel .config file! NOTE: THIS MAY BREAK ANYTIME AS ASHMEM IS REPLACED WITH MEMFD AND MOST LIKELY IS ALREADY NOT WORKING WITH KERNEL ANYMORE v6.x'
-echo 'which is not supported by Anbox yet..'
-make olddefconfig
-echo 'Configuration file with standard defaults options: '$KERNEL_VERSION'_android has been created..'
-echo 'Please modify the created configuration to enable android modules beeing built within the kernel'
+cp /boot/config-$(uname -r) ./.config # we copy your current configuration file from /boot/config to the kernel folder and rename it to .config
+echo $(green 'DONE!')
+echo ''
+echo ''
+echo $(italyell 'Writing defaults to fresh .config options:')
+echo ''
+make olddefconfig # we re-generate the copied config file to update new lines in newer kernel versions with the pre-defined default answer
+echo $(green 'DONE!') $(italyell 'Make build configuration file with standard defaults options for kernel version: '$KERNEL_VERSION' has been created..')
+echo ''
+echo ''
 echo 'Installing dependencies for the graphical .config file configuration menu'
 echo 'Please use XCONFIG to change the neccessary configuration before building from source'
 echo 'You need to modify the Android section to yes. Use the Menu and select "Find" Search for this entries:"'
-echo 'CONFIG_ASHMEM=y CONFIG_ANDROID=y CONFIG_ANDROID_BINDER_IPC=y CONFIG_ANDROID_BINDERFS=y CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,binderfs" CONFIG_ANDROID_BINDER_IPC_SELFTEST=y
+echo 'CONFIG_ANDROID=y CONFIG_ANDROID_BINDER_IPC=y CONFIG_ANDROID_BINDERFS=y CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,binderfs" CONFIG_ANDROID_BINDER_IPC_SELFTEST=y
 CONFIG_SYSTEM_TRUSTED_KEYS="" CONFIG_SYSTEM_REVOCATION_KEYS="" CONFIG_LOCALVERSION="-android"'
 make xconfig
 echo '"If you need this graphical menu again just enter this anytime here:"'
 echo 'make xconfig'
-echo 'You have'
-nproc && echo 'cpu cores'
-echo "Ready to start compiling! Enter "'time nice make bindeb-pkg LOCALVERSION=-android -j''YOUR NUMBER OF CORES HERE'" to start compiling with multi-core mode.."
-# echo 'Please add "LOCALVERSION=-android" only the first time you compile a kernel! Otherwise your kernel files will have'
-echo '"-android-android-android' added and so on..." "This is because the make command reads the installed version number also.."' 
-echo''
-
+echo ''
+echo ''
+echo $(italyell 'Resorting '$CPATH'/kernel/.config file')
+make olddefconfig # we have updated lines at the end of the config file, however we re-generate the config file again to maintain the correct structure for the build process to success
+echo $(green 'DONE!')
+echo ''
+echo ''
+echo $(yellow 'You have a maximum of '$CPUCORES' cpu cores for building from source')
+echo ''
 read -r -p "
 ###############################################################
-# deb-file creation will start. Do you want to continue?      #
+#               $(flshgreen 'Ready to start compiling!')                     #
+# $(ital 'To manually compile enter: time nice make bindeb-pkg -j'$CPUCORES'')   #
 #                                                             #
-#   - Make sure configuration changes are correct!            #
+# $(flshgreen 'deb-file creation will start.') $(green 'Do you want to continue?')      #
+#                                                             #
+#   $(ital '- Make sure configuration changes are correct! -')          #
 ############################################################### 
 (y|Y)es (n|N)o # " input
 
@@ -92,13 +144,15 @@ case $input in
  ;;
 esac
 
-time nice make bindeb-pkg -j'$CPUCORES' # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
+echo $(italyell 'Sit back! This can take a very long time depending on your cpu power!')
+echo ''
+time nice make bindeb-pkg -j$CPUCORES # we start compiling process with: counting the time needed to compile, show less and nicer compile information, generate deb-files at the end and use x-cpu cores to speed up compiling procedure
 
 read -r -p "
 ###############################################################
-# deb-files will be installed. Do you want to continue?       #
+# $(flshgreen 'deb-files will be installed.') $(green 'Do you want to continue?')       #
 #                                                             #
-#   - Make sure compiling finished successfully!              #
+#   $(ital '- Make sure compiling finished successfully!')              #
 ############################################################### 
 (y|Y)es (n|N)o # " install
 
@@ -116,6 +170,15 @@ case $install in
  ;;
 esac
 
-sudo dpkg -i $CPATH/linux-*.deb # we install the compiled *.deb kernel files
+ls $CPATH/linux-*.deb
+echo $(italyell 'will now be installed!')
 echo ''
-echo 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section'
+sudo dpkg -i $CPATH/linux-*.deb # we install the compiled *.deb kernel files
+echo $(green 'DONE!')
+echo ''
+echo $(green 'If the script has an error for you, please report it on github. You can leave a screenshot if you like to in the issues section')
+echo ''
+echo $(red 'If you are using uefi hardware with secure boot you MUST sign your kernel with a generated signature to be able to boot the new kernel!')
+echo $(red 'You can use https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/signukuu for this if you wish!')
+echo ''
+echo ''
