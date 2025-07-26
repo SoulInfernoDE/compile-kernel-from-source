@@ -105,15 +105,25 @@ Has the ASHMEM module removed completely. <del>Therefore we need to reverse that
 1. Download the signkernel script and make it executable if it's not:
 
 chmod +x cfs_signkernel.sh
+or chmod +x signukuu
 
 2. execute it:
 ./cfs_signkernel.sh
+or
+./signukuu
 
-3. - You will be asked to generate key files and enroll/import them into your linux / bios.
+2. - You will be asked to generate key files and enroll/import them into your linux / bios.
    - If you already created the key files once and did set a password, you can say "NO" and
      only sign your fresh installed custom kernel. Note that you need to do this also after
      creating your key files and before rebooting.
      Otherwise you cannot boot your unsigned kernel.
 
+3. - If you want to sign your future kernel builds automatically then put the file `sign_kernel_image` into
+     `/etc/kernel/postinst.d/`
+     [signkernel/etc/kernel/postinst.d/sign_kernel_image](https://github.com/SoulInfernoDE/compile-kernel-from-source/tree/v6.x/signkernel/etc/kernel/postinst.d)
+
+   - The postinst.d scripts will be automatically called everytime a kernel package is
+     beeing installed or removed. For details see commit: [581a485](https://github.com/SoulInfernoDE/compile-kernel-from-source/commit/581a4856e741b825b21f2c8892fc7dca73d0895a)
+     
 
 # Please report any bugs or errors found..
