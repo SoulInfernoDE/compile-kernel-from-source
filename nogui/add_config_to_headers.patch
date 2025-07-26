@@ -1,17 +1,8 @@
---- a/scripts/package/builddeb
-+++ b/scripts/package/builddeb
-@@ install_linux_headers () {
-     mkdir -p "$hdrdir"
-
-     rsync -a --include='*/' \
-         --include='*.h' --exclude='*' \
-         "$srctree/include/" "$hdrdir/include"
-
-+    # Include .config for DKMS and module builds
-+    if [ -f "$objtree/.config" ]; then
-+        echo "Including .config in headers package"
-+        cp "$objtree/.config" "$hdrdir/.config"
-+    fi
-
-     rsync -a "$objtree/include/generated/" "$hdrdir/include/generated"
-
+sed -i '/^install_kernel_headers () {/,/^}/ {
+  /^}/ i\
+    \ \ \ \ # Include .config in headers package (for DKMS and module signing)\
+    \ \ \ \ if [ -f "$objtree/.config" ]; then\
+    \ \ \ \ \ \ echo "Including .config in headers package"\
+    \ \ \ \ \ \ cp "$objtree/.config" "$pdir/usr/src/linux-headers-${version}/.config"\
+    \ \ \ \ fi
+}' scripts/package/builddeb
