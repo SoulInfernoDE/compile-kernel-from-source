@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# Get and use the current users home directory, even when sudo is used
+USER_HOME=$(eval echo ~$SUDO_USER)
+MOK_KEY="$USER_HOME/MOK.priv"
+MOK_CERT="$USER_HOME/MOK.pem"
+
+# Kernel versions, that will be checked
+KERNEL_IMAGES="/boot/vmlinuz-*"
+
+# Check for MOK-file existence
+if [ ! -f "$MOK_KEY" ] || [ ! -f "$MOK_CERT" ]; then
+  echo "❌ MOK key or certificate not found! Please create one first. ❌"
+  exit 1
+fi
+
+# Walking through kernel images in /boot folder
+for IMAGE in $KERNEL_IMAGES; do
+  # extracting kernel image version string
+  KERNEL_VERSION=$(basename $IMAGE | sed 's/vmlinuz-//')
+
+  echo "Checking kernel image: $IMAGE if it signed.."
+
+  # Checking of already signed kernel images
+  SIGNATURE_CHECK=$(sudo sbverify "$IMAGE" 2>&1)
+
+  if [[ "$SIGNATURE_CHECK" == *"No signature table present"* ]]; then
+    # If the kernel image is unsigned then sign it
+    echo "Signing kernel image $IMAGE ..."
+    sudo sbsign --key "$MOK_KEY" --cert "$MOK_CERT" "$IMAGE" --output "$IMAGE"
+    echo "Successfully signed kernel image $IMAGE has replaced the unsigned image.. ✅"
+  else
+    # Skipping already signed images
+    echo "Kernel-Image $IMAGE is already signed; skipping this step.. ❌"
+  fi
+done
