@@ -3,7 +3,11 @@
 # Save the number of your cores to the variable CPUCORES
 CPUCORES=$(nproc)
 # You can change this variable to compile in any other folder
-CPATH=~/Downloads
+CPATH="$HOME/Downloads"
+# to include the .config in the deb-files we use this patch
+BUILDDEB_FILE="scripts/package/builddeb"
+MARKER="# Include .config in headers package (for DKMS and module signing)"
+# PATCH="add_config_to_headers.patch"
 
 # Color functions for text colors
 RED='\033[1;31m'
@@ -54,9 +58,16 @@ function flshgreen {
     printf "${FLSHGREEN}$@${NC}\n"
 }
 
+echo 'We need sudo for some commands like dependencies, dkms, to copy the .config file after build time and for dpkg'
+echo ' to install the deb files afterwards. sudo will be requested only one time here:'
+sudo -v # requesting sudo permissions
+while true; do
+  sudo -v
+  sleep 60
+done & # keep sudo active until wait quits the script
 echo ''
 echo ''
-echo  $(green 'Kernel Pull Merge Script v1.01 for generic builds')
+echo  $(green 'Kernel Pull Merge Script v1.1 for custom generic builds')
 echo ''
 echo $(yellow 'Silently installing dependencies..')
 sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils > /dev/null
@@ -76,7 +87,7 @@ echo $(ital 'work directory we just created:')
 echo ''
 echo $(red ''$CPATH'')
 echo ''
-read -p " $(italyell 'Which kernel version do you want to compile?') example: $(italyell '6.10.8') -->> " KERNEL_VERSION
+read -p " $(italyell 'Which kernel version do you want to compile?') example: $(italyell '6.15.8') -->> " KERNEL_VERSION
 echo ''
 echo $(ital 'kernel version you selected to compile from source: '$KERNEL_VERSION'')
 echo ''
@@ -102,6 +113,11 @@ make olddefconfig # we re-generate the copied config file to update new lines in
 echo $(green 'DONE!') $(italyell 'Make build configuration file with standard defaults options for kernel version: '$KERNEL_VERSION' has been created..')
 echo ''
 echo ''
+# echo $(blue 'Downloading patch file for adding .config-file to deb creation: '$PATCH'')
+# echo ''
+# wget 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/add_config_to_headers.patch'
+# echo ''
+# echo ''
 echo $(blue 'Downloading the merge fragments file: .config-fragment - if you need some lines changed or added please create a pull request')
 echo ''
 wget 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/.config-fragment'
@@ -123,6 +139,24 @@ echo ''
 echo $(italyell 'Resorting '$CPATH'/kernel/.config file')
 make olddefconfig # we have updated lines at the end of the config file, however we re-generate the config file again to maintain the correct structure for the build process to success
 echo $(green 'DONE!')
+echo ''
+echo ''
+# apply patch, if not already done
+if grep -qF "$MARKER" "$BUILDDEB_FILE"; then
+    echo "Patch already applied – skipping ..."
+else
+    echo "Applying patch ..."
+    sed -i "/^install_kernel_headers () {/,/^}/ {
+      /^}/ i\
+        \ \ \ \ $MARKER\n\
+        \ \ \ \ if [ -f \"\$objtree/.config\" ]; then\n\
+        \ \ \ \ \ \ echo \"Including .config in headers package\"\n\
+        \ \ \ \ \ \ cp \"\$objtree/.config\" \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n\
+        \ \ \ \ fi
+    }" "$BUILDDEB_FILE"
+    echo "Patch successfull applied. The .config file will now be copied while deb install is running. Thus module signing is enabled."
+fi
+cp .config config > /dev/null # enables one time internal module signing addition at build time
 echo ''
 echo ''
 echo $(yellow 'You have a maximum of '$CPUCORES' cpu cores for building from source')
@@ -161,6 +195,7 @@ read -r -p "
 # $(flshgreen 'deb-files will be installed.') $(green 'Do you want to continue?')       #
 #                                                             #
 #   $(ital '- Make sure compiling finished successfully!')              #
+#   $(ital '- Manual installation: sudo dpkg -i '$CPATH'/linux-*.deb')       #
 ############################################################### 
 (y|Y)es (n|N)o # " install
 
@@ -181,6 +216,14 @@ esac
 ls $CPATH/linux-*.deb
 echo $(italyell 'will now be installed!')
 echo ''
+echo ''
+# saving the kernelversion text to KVER
+KVER=$(make -s kernelrelease)
+echo ''
+# sudo cp "$CPATH/kernel/.config" /usr/src/linux-headers-"$KERNEL_VERSION"*/
+# echo '.config-file has been copied to the kernel headers folder as this is needed for module signing!' # if .deb files are installed without this then modules will not be signed
+echo ''
+echo ''
 sudo dpkg -i $CPATH/linux-*.deb # we install the compiled *.deb kernel files
 echo $(green 'DONE!')
 echo ''
@@ -190,3 +233,4 @@ echo $(red 'If you are using uefi hardware with secure boot you MUST sign your k
 echo $(red 'You can use https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/signukuu for this if you wish!')
 echo ''
 echo ''
+wait
