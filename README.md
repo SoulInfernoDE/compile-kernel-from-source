@@ -39,7 +39,7 @@ createscriptenv.sh
 
 Adds the ability to use my scripts directly in your bash/terminal by just typing the scripts name. Make sure you copy your/my scripts to your ~/.scripts folder. (I will be extending this script somehow sometime to update-check itself and offer a installation menu for my scripts. I really love creating workflow that enables to speed up things that beeing frequently used..)
 
-<del>cfs_nogui.sh</del> (deprecated) and cfs_noguimerge.sh
+<del>cfs_nogui.sh</del> (deprecated) and ksource_interactive
 
 It automates the steps to compile your kernel on ubuntu/debian based systems (such as linux mint for example) while asking
 the user some questions interactively
@@ -64,7 +64,7 @@ CONFIG_LOCALVERSION="-android"
 
 1. Download the nogui/noguimerge (recommended version) or gui script and make it executable if it's not:
 
-chmod +x cfs_gui.sh cfs_nogui.sh cfs_noguimerge.sh
+chmod +x cfs_gui.sh cfs_nogui.sh ksource_interactive
 
 2. execute it:
 
@@ -72,7 +72,7 @@ chmod +x cfs_gui.sh cfs_nogui.sh cfs_noguimerge.sh
 or
 ./cfs_nogui.sh
 or
-./cfs_noguimerge.sh
+./ksource_interactive
 
 # Note:
 You will be asked which version you want to compile which then will be pulled from kernel.org.
