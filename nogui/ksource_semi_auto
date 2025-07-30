@@ -75,12 +75,17 @@ if curl -fsSL "$REMOTE_URL" -o "$REMOTE_TMP"; then
     REMOTE_VERSION=$(grep '^SCRIPT_VERSION=' "$REMOTE_TMP" | cut -d'"' -f2)
 
     if [[ "$REMOTE_VERSION" != "$SCRIPT_VERSION" ]]; then
-        flshgreen "New version available: $REMOTE_VERSION (local: $SCRIPT_VERSION)"
+        flshgreen "New version available: $REMOTE_VERSION"
+        echo
         yellow "Updating $SCRIPT_NAME..."
         cp "$REMOTE_TMP" "$SCRIPT_PATH"
         chmod +x "$SCRIPT_PATH"
+        echo
         green "Restarting updated script..."
         exec "$SCRIPT_PATH" "$@"
+        green "...restarted!"
+        echo
+        echo
         exit
     fi
 fi
@@ -88,6 +93,7 @@ rm -f "$REMOTE_TMP"
 echo
 echo
 ital "sudo is needed (dependencies,etc..)"
+echo
 # 'We need sudo for some commands like dependencies, dkms, to copy the .config file after build time and for dpkg'
 sudo -v # requesting sudo permissions
 while true; do
