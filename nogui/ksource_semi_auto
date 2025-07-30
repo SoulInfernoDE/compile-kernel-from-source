@@ -14,7 +14,7 @@ BUILDDEB_FILE="scripts/package/builddeb"
 MARKER="# Include .config in headers package (for DKMS and module signing)"
 # PATCH="add_config_to_headers.patch but done with sed for dynamic integration"
 SCRIPT_NAME="ksource_semi_auto"
-SCRIPT_VERSION="1.1"
+SCRIPT_VERSION="1.11"
 SCRIPT_PATH="$HOME/.scripts/$SCRIPT_NAME"
 REMOTE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/$SCRIPT_NAME"
 #
@@ -82,10 +82,10 @@ if curl -fsSL "$REMOTE_URL" -o "$REMOTE_TMP"; then
         chmod +x "$SCRIPT_PATH"
         echo
         green "Restarting updated script..."
-        exec "$SCRIPT_PATH" "$@"
         green "...restarted!"
         echo
         echo
+        exec "$SCRIPT_PATH" "$@"
         exit
     fi
 fi
