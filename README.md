@@ -39,20 +39,20 @@ Everything is work in progress .. (Should be working though as expected now..)
 
 # Explanation of the scripts:
 
-pullukuu
+ksource_semi_auto
 
 It automates the steps to compile your kernel on ubuntu/debian based systems without tools like ukuu (such as linux mint for example which is what i play around with at the moment) while asking
 the user some questions interactively
 
 # Instructions:
 
-1. Download the pullukuu and signukuu script and make it executable if it's not:
+1. Download the ksource_semi_auto and signukuu script and make it executable if it's not:
 
-chmod +x pullukuu signukuu
+chmod +x ksource_semi_auto signukuu
 
 2. execute it:
 
-./pullukuu
+./ksource_semi_auto
 
 and if you have secure boot you need to sign your kernel after building and installing it
 
