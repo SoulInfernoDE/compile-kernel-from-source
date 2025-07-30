@@ -12,8 +12,11 @@ CPATH="$HOME/Downloads"
 # to include the .config in the deb-files we use this patch
 BUILDDEB_FILE="scripts/package/builddeb"
 MARKER="# Include .config in headers package (for DKMS and module signing)"
-# PATCH="add_config_to_headers.patch"
-#
+# PATCH="add_config_to_headers.patch but done with sed for dynamic integration"
+SCRIPT_NAME="ksource_semi_auto"
+SCRIPT_VERSION="1.1"
+SCRIPT_PATH="$HOME/.scripts/$SCRIPT_NAME"
+REMOTE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/$SCRIPT_NAME"
 #
 # Color functions for text colors
 RED='\033[1;31m'
@@ -64,7 +67,25 @@ function flshgreen {
     printf "${FLSHGREEN}$@${NC}\n"
 }
 
-echo  $(green 'Kernel Pull Merge Script v1.1 for custom generic builds')
+echo  $(green "Kernel Pull Merge Script v$SCRIPT_VERSION for custom generic builds")
+echo
+# ---[ AUTO-UPDATE CHECK ]---
+REMOTE_TMP="$(mktemp "/tmp/${SCRIPT_NAME}_XXXXXX")"
+if curl -fsSL "$REMOTE_URL" -o "$REMOTE_TMP"; then
+    REMOTE_VERSION=$(grep '^SCRIPT_VERSION=' "$REMOTE_TMP" | cut -d'"' -f2)
+
+    if [[ "$REMOTE_VERSION" != "$SCRIPT_VERSION" ]]; then
+        flshgreen "New version available: $REMOTE_VERSION (local: $SCRIPT_VERSION)"
+        yellow "Updating $SCRIPT_NAME..."
+        cp "$REMOTE_TMP" "$SCRIPT_PATH"
+        chmod +x "$SCRIPT_PATH"
+        green "Restarting updated script..."
+        exec "$SCRIPT_PATH" "$@"
+        exit
+    fi
+fi
+rm -f "$REMOTE_TMP"
+echo
 echo
 ital "sudo is needed (dependencies,etc..)"
 # 'We need sudo for some commands like dependencies, dkms, to copy the .config file after build time and for dpkg'
