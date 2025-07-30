@@ -75,7 +75,7 @@ if curl -fsSL "$REMOTE_URL" -o "$REMOTE_TMP"; then
     REMOTE_VERSION=$(grep '^SCRIPT_VERSION=' "$REMOTE_TMP" | cut -d'"' -f2)
 
     if [[ "$REMOTE_VERSION" != "$SCRIPT_VERSION" ]]; then
-        flshgreen "New version available: $REMOTE_VERSION"
+        flshgreen "New version available: v$REMOTE_VERSION"
         echo
         yellow "Updating $SCRIPT_NAME..."
         cp "$REMOTE_TMP" "$SCRIPT_PATH"
