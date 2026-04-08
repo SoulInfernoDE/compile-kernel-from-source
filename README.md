@@ -1,124 +1,62 @@
-# For which linux distributions are these scripts ?
+# Kernel Upgrade Script (v2.0)
 
-Actually only for Ubuntu / Debian based linux systems (specifically tested for latest linux mint)
-I have not planned to update the scripts for other linux systems like manjaro, kali etc..
+[🇩🇪 Wechseln zur deutschen Version](README_DE.md)
 
-# What is this !?
-If you want to have the latest linux kernel running you often need to compile it yourself as the standard kernels are most of the time not up to date.
+A fully automated bash script to compile, install, and sign current mainline Linux kernels. This script is optimized to integrate modern kernel features and security standards (UEFI Secure Boot signing) seamlessly.
 
-Also if you want to add something to your kernel then you need to recompile it with the compile options enabled for it. (For example android module like 'binder')
-It makes sense to try a new stable kernel version in combination with the new module so you can profit from all the new features and updates of the newer kernel version..
+## 🚀 Features
 
-You have two options to do so:
+- **Fully Automated:** Downloads the latest stable kernel from `kernel.org`, configures, builds, and installs it.
+- **Waydroid Ready:** Automatically integrates `.config` fragments for **Binder** and **memfd** (required for modern Waydroid/Android containers, replacing the obsolete ashmem).
+- **Secure Boot Support:** Automated MOK (Machine Owner Key) generation and signing of kernel images (`sbsign`).
+- **Autosign Integration:** Installs a post-install hook that automatically signs future kernel updates.
+- **Multilingual:** Automatically detects system locale (English/German).
+- **Flexible:** Supports installing specific versions via `--kernelversion`.
 
-- Compile the kernel yourself step by step which needs some knowledge about it and time from start to finish..
-- You could use these scripts if you like to which will type the terminal commands automated for you one after another
+## 🛠 Prerequisites
 
-If you compile the kernel yourself you most likely want to update later on the same way. Thus you need to retype everything from start to finish.
-The script makes it easier to redo everything very fast.
+The script installs necessary dependencies automatically via `apt`. Generally required:
+- A Debian-based system (Ubuntu, Linux Mint, Debian, etc.)
+- Active internet connection
+- Root privileges (via `sudo`)
 
-# Will this burn my computer or destroy my linux system !?
-Most likely not. Linux is able to have multiple kernels installed at the same time!
-If your kernel doesn't boot your linux system, restart your computer and select advanced options in grub bootmenu. Then just select the older kernel that works for you. Now you can delete unused kernels and try again if you like to..
+## 📦 Installation & Usage
 
+1. **Prepare the script:**
+   Save or download the script code as `kernel_upgrade`.
 
-# I need this script for other linux distros!
-- You may want to have a look at the script itself with a text editor together with the wiki website of your linux distribution
-- You could create a issue here and nicely ask for it - if more people are interested in it for other distros i MAY do it in my spare time...
-- You could fork this repo and recreate it for your distro and pull request the new script back to here so we get a script collection from the community
+2. **Make it executable:**
+   ```bash
+   chmod +x kernel_upgrade
 
-# compile-kernel-from-source contains:
-Scripts to be able to automate compiling procedures. Eg. if you need to add .config options to your kernel sources like android (<del>ASHMEM</del>, BINDER, etc.)
+3. **Run it:**
+   ```bash
+   ./kernel_upgrade
 
-Can be used to address the <del>anbox</del> waydroid modules issue. <del>explained in this thread: https://github.com/anbox/anbox-modules/issues/75#issuecomment-794079944</del>
+## ⚙️ Parameters & Options
+   ```
+Option	               Description
+-h, --help	            Shows the help page.
+--version	            Shows the current script version (v2.0).
+--kernelversion [VER]	Forces the build of a specific version (e.g., 6.12.1).
+--signonly	            Only signs an existing kernel in /boot (no build).
+--installautosign	      Installs the hook script for automatic signing during updates.
+--uninstallautosign   	Removes the autosign script and optionally cleans up keys.
+```
 
-Everything is work in progress .. (Should be working though as expected now..)
+## 🔐 Secure Boot Note
+If you use Secure Boot, the script will ask you during the first run whether to generate new MOK keys.
 
-# Explanation of the scripts:
-createscriptenv.sh
+Confirm the generation.
 
-Adds the ability to use my scripts directly in your bash/terminal by just typing the scripts name. Make sure you copy your/my scripts to your ~/.scripts folder. (I will be extending this script somehow sometime to update-check itself and offer a installation menu for my scripts. I really love creating workflow that enables to speed up things that beeing frequently used..)
+Reboot your system after the script finishes.
 
-kernel_upgrade
+In the blue menu (MOK Manager), select: Enroll MOK -> Continue -> Yes -> Enter Password -> Reboot.
+The new kernel can now be booted securely.
 
-It automates the steps to compile your kernel on ubuntu/debian based systems (such as linux mint for example) while asking
-the user some questions interactively
+## 📂 File Structure
+~/Downloads: Location for extracting kernel sources and building .deb packages.
 
-These configuration parameters will be changed accordingly:
-<del>CONFIG_ASHMEM=y</del> (it is already removed from the kernel tree completely!)
-CONFIG_ANDROID=y
-CONFIG_ANDROID_BINDER_IPC=y
-CONFIG_ANDROID_BINDERFS=y
-CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,binderfs"
-CONFIG_ANDROID_BINDER_IPC_SELFTEST=y
-CONFIG_SYSTEM_TRUSTED_KEYS=""
-CONFIG_SYSTEM_REVOCATION_KEYS=""
-CONFIG_LOCALVERSION="-waydroid"
+~/.mok_keys: Storage for your private UEFI keys.
 
-# Instructions:
-
-1. Download the kernel_upgrade (recommended version) script and make it executable if it's not:
-
-chmod +x kernel_upgrade
-
-2. execute it:
-
-./kernel_upgrade
-
-or
-
-use the create_scripts_environment_for_terminal_direct_use/createscriptenv.sh and
-copy kernel_upgrade to ~/.scripts and finally after restarting your terminal just say:
-
-kernel_upgrade
-
--> Thats the way you easily can repeat the build procedure
-
-# Note:
-The latest stable kernel version will be pulled from kernel.org.
-You can also have a look on https://kernel.org/ to see which versions are actually there.
-
-3. After the kernel has been compiled you can install it with:
-sudo dpkg -i ../linux-*.deb
-
-3. After installing the kernel you may need to sign it for booting with UEFI / Secure Boot.
--->> Go Here for a script which can assist you: https://github.com/SoulInfernoDE/compile-kernel-from-source#generate-mok-file-and-sign-your-kernel-with-automation-script
-4. Base reading article is: https://github.com/jakeday/linux-surface/blob/3267e4ea1f318bb9716d6742d79162de8277dea2/SIGNING.md
-
-::: Summary what will be done :::
-These are the steps you need to take:
-- Create a configuration file named MOK
-- enroll the MOK file with a password you choose into your linux and bios
-- sign your newly installed kernel with it
-- reboot the system - you will get a blue MOKManager screen
-- select enroll, enroll key and enter your password which you had choosen
-
--->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
-
-# Generate MOK file and sign your kernel with automation script:
-
-1. Download the signkernel script and make it executable if it's not:
-
-chmod +x cfs_signkernel.sh
-or chmod +x signukuu
-
-2. execute it:
-./cfs_signkernel.sh
-or
-./signukuu
-
-2. - You will be asked to generate key files and enroll/import them into your linux / bios.
-   - If you already created the key files once and did set a password, you can say "NO" and
-     only sign your fresh installed custom kernel. Note that you need to do this also after
-     creating your key files and before rebooting.
-     Otherwise you cannot boot your unsigned kernel.
-
-3. - If you want to sign your future kernel builds automatically then put the file `sign_kernel_image` into
-     `/etc/kernel/postinst.d/`
-     [signkernel/etc/kernel/postinst.d/sign_kernel_image](https://github.com/SoulInfernoDE/compile-kernel-from-source/tree/v6.x/signkernel/etc/kernel/postinst.d)
-
-   - The postinst.d scripts will be automatically called everytime a kernel package is
-     beeing installed or removed. For details see commit: [581a485](https://github.com/SoulInfernoDE/compile-kernel-from-source/commit/581a4856e741b825b21f2c8892fc7dca73d0895a)
-     
-
-# Please report any bugs or errors found..
+/etc/kernel/postinst.d/: Installation path for the autosign hook.
