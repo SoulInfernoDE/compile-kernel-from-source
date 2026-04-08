@@ -171,7 +171,7 @@ cd "linux-${KERNEL_VERSION}"
 
 cp /boot/config-$(uname -r) ./.config
 make olddefconfig
-wget -q 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment'
+wget -q 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/.config-fragment'
 ./scripts/kconfig/merge_config.sh .config .config-fragment
 make olddefconfig
 
