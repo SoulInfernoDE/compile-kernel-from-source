@@ -1,6 +1,6 @@
 # For which linux distributions are these scripts ?
 
-Actually only for Ubuntu / Debian based linux systems
+Actually only for Ubuntu / Debian based linux systems (specifically tested for latest linux mint)
 I have not planned to update the scripts for other linux systems like manjaro, kali etc..
 
 # What is this !?
@@ -39,17 +39,12 @@ createscriptenv.sh
 
 Adds the ability to use my scripts directly in your bash/terminal by just typing the scripts name. Make sure you copy your/my scripts to your ~/.scripts folder. (I will be extending this script somehow sometime to update-check itself and offer a installation menu for my scripts. I really love creating workflow that enables to speed up things that beeing frequently used..)
 
-<del>cfs_nogui.sh</del> (deprecated) and ksource_interactive
+kernel_upgrade
 
 It automates the steps to compile your kernel on ubuntu/debian based systems (such as linux mint for example) while asking
 the user some questions interactively
 
-cfs_gui.sh
-
-Same as the no GUI version but you will get a graphical interface which lets you change your config file before you re-build your kernel.
-Here you need to activate all those 'android' <del>and 'ashmem'</del> options yourself. Make sure to do so or you will miss the <del>ashmem and</del> binder module in your kernel..
-
-Change these configuration parameters manually in the gui version and save it:
+These configuration parameters will be changed accordingly:
 <del>CONFIG_ASHMEM=y</del> (it is already removed from the kernel tree completely!)
 CONFIG_ANDROID=y
 CONFIG_ANDROID_BINDER_IPC=y
@@ -58,32 +53,37 @@ CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,binderfs"
 CONFIG_ANDROID_BINDER_IPC_SELFTEST=y
 CONFIG_SYSTEM_TRUSTED_KEYS=""
 CONFIG_SYSTEM_REVOCATION_KEYS=""
-CONFIG_LOCALVERSION="-android"
+CONFIG_LOCALVERSION="-waydroid"
 
 # Instructions:
 
-1. Download the nogui/noguimerge (recommended version) or gui script and make it executable if it's not:
+1. Download the kernel_upgrade (recommended version) script and make it executable if it's not:
 
-chmod +x cfs_gui.sh cfs_nogui.sh ksource_interactive
+chmod +x kernel_upgrade
 
 2. execute it:
 
-./cfs_gui.sh
+./kernel_upgrade
+
 or
-./cfs_nogui.sh
-or
-./ksource_interactive
+
+use the create_scripts_environment_for_terminal_direct_use/createscriptenv.sh and
+copy kernel_upgrade to ~/.scripts and finally after restarting your terminal just say:
+
+kernel_upgrade
+
+-> Thats the way you easily can repeat the build procedure
 
 # Note:
-You will be asked which version you want to compile which then will be pulled from kernel.org.
-You can also look on https://kernel.org/ if you are unsure and want the latest kernel version compiled and installed.
+The latest stable kernel version will be pulled from kernel.org.
+You can also have a look on https://kernel.org/ to see which versions are actually there.
 
 3. After the kernel has been compiled you can install it with:
 sudo dpkg -i ../linux-*.deb
 
-4. After installing the kernel you may need to sign it for booting with UEFI / Secure Boot.
+3. After installing the kernel you may need to sign it for booting with UEFI / Secure Boot.
 -->> Go Here for a script which can assist you: https://github.com/SoulInfernoDE/compile-kernel-from-source#generate-mok-file-and-sign-your-kernel-with-automation-script
-5. Base reading article is: https://github.com/jakeday/linux-surface/blob/3267e4ea1f318bb9716d6742d79162de8277dea2/SIGNING.md
+4. Base reading article is: https://github.com/jakeday/linux-surface/blob/3267e4ea1f318bb9716d6742d79162de8277dea2/SIGNING.md
 
 ::: Summary what will be done :::
 These are the steps you need to take:
@@ -94,11 +94,6 @@ These are the steps you need to take:
 - select enroll, enroll key and enter your password which you had choosen
 
 -->> Your custom MOK signing key is now installed in your bios, your kernel is signed with it and your linux system is verifying it
-
-# Kernel 5.18+ and 6.x+
-Has the ASHMEM module removed completely. <del>Therefore we need to reverse that changes until Anbox switches to MEMFD instead of ASHMEM.</del>
-
--->> Maybe broken with latest kernels now. Dirty patches and fixes may be found at the repo from [@choff](https://github.com/choff) (Thank you so much for tracking / fixing ashmem!)
 
 # Generate MOK file and sign your kernel with automation script:
 
