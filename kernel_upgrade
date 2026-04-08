@@ -37,7 +37,7 @@ italyell()  { printf "%b%s%b\n" "$ITALYELL"  "$*" "$NC"; }
 flsh()      { printf "%b%s%b\n" "$FLSH"      "$*" "$NC"; }
 flshgreen() { printf "%b%s%b\n" "$FLSHGREEN" "$*" "$NC"; }
 
-echo  $(green 'Kernel Pull Merge Script v1.4 for ROG-Zephyrus-M16-GU603ZM')
+echo  $(green 'kernel pull merge script v1.4 for generic binder applications')
 echo
 ital "sudo is needed (dependencies,etc..)"
 # 'We need sudo for some commands like dependencies, dkms, to copy the .config file after build time and for dpkg'
