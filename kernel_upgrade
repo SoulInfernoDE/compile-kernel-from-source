@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v2.0-stable"
+SCRIPT_VERSION="v2.2-stable"
 
 # --- SPRACH-ERKENNUNG ---
-if [[ $LANG == de* ]]; then
+if [[ ${LANG:-} == de* ]]; then
     L_HELP="Nutzung: ./kernel_upgrade [OPTIONEN]\n\nEin vollautomatisches Skript zum Kompilieren, Installieren und Signieren eines aktuellen Mainline-Kernels.\n\nOptionen:\n  -h, --help               Zeigt diese Hilfe an.\n  --version                Zeigt die Skript-Version an.\n  --kernelversion [VER]    Erzwingt eine spezifische Kernel-Version.\n  --signonly               Nur händische Signierung eines Kernels in /boot.\n  --installautosign        Installiert das Autosignierungs-Skript.\n  --uninstallautosign      Entfernt das Autosignierungs-Skript.\n"
     L_ERR_DEP="Fehler: Fehlende oder falsche Abhängigkeiten selektiert."
     L_MOK_CHECK="Prüfe MOK Schlüssel..."
@@ -33,9 +33,7 @@ else
 fi
 
 # --- HILFE-FUNKTION ---
-show_help() {
-    echo -e "$L_HELP"
-}
+show_help() { echo -e "$L_HELP"; }
 
 # --- PARAMETER-STEUERUNG ---
 SIGN_ONLY=false
@@ -132,7 +130,10 @@ if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; exit 0; fi
 if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; exit 0; fi
 if [ "$SIGN_ONLY" = true ]; then manual_sign; exit 0; fi
 
-DEB_COUNT=$(ls "$CPATH"/linux-*.deb 2>/dev/null | wc -l || echo 0)
+# DEB_COUNT robuster zählen
+DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
+DEB_COUNT=${DEB_COUNT//[[:space:]]/}
+
 if [ "$DEB_COUNT" -gt 0 ]; then
     yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
     read -p "$L_SKIP_PROMPT" skip
@@ -171,20 +172,6 @@ cd "linux-${KERNEL_VERSION}"
 
 cp /boot/config-$(uname -r) ./.config
 make olddefconfig
-wget -q 'https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/nogui/.config-fragment'
-./scripts/kconfig/merge_config.sh .config .config-fragment
-make olddefconfig
 
-if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
-    sed -i "/^install_kernel_headers () {/,/^}/ { /^}/ i\\    $MARKER\n    if [ -f \"\$objtree/.config\" ]; then\n      cp \"\$objtree/.config\" \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n    fi" } "$BUILDDEB_FILE"
-fi
-
-time nice make bindeb-pkg -j"$CPUCORES"
-
-manage_keys
-manage_autosign
-sudo dpkg -i "$CPATH"/linux-*.deb
-manual_sign
-
-kill $SUDO_PID 2>/dev/null || true
-green "$L_DONE"
+# .config-fragment laden und LOCALVERSION auf -waydroid setzen
+wget -q '
