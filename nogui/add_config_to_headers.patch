@@ -1,8 +1,0 @@
-sed -i '/^install_kernel_headers () {/,/^}/ {
-  /^}/ i\
-    \ \ \ \ # Include .config in headers package (for DKMS and module signing)\
-    \ \ \ \ if [ -f "$objtree/.config" ]; then\
-    \ \ \ \ \ \ echo "Including .config in headers package"\
-    \ \ \ \ \ \ cp "$objtree/.config" "$pdir/usr/src/linux-headers-${version}/.config"\
-    \ \ \ \ fi
-}' scripts/package/builddeb
