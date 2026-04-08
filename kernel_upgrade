@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v2.2-stable"
+SCRIPT_VERSION="v2.3-stable"
 
 # --- SPRACH-ERKENNUNG ---
 if [[ ${LANG:-} == de* ]]; then
@@ -67,7 +67,7 @@ MOK_PEM="$USER_MOK_DIR/MOK.pem"
 MOK_DER="$USER_MOK_DIR/MOK.der"
 AUTOSIGN_PATH="/etc/kernel/postinst.d/sign_kernel_images"
 BUILDDEB_FILE="scripts/package/builddeb"
-MARKER="# Include .config in headers package (for DKMS and module signing)"
+MARKER="# Include .config in headers package"
 
 # Farben
 RED='\033[1;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
@@ -83,7 +83,7 @@ manage_keys() {
         yellow "$L_MOK_CHECK"
         read -p "$L_MOK_GEN" gen_key
         if [[ $gen_key =~ ^[yY]$ ]]; then
-            wget -q -O "$USER_MOK_DIR/mokconfig.cnf" https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/mokconfig.cnf
+            wget -q -O "$USER_MOK_DIR/mokconfig.cnf" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/mokconfig.cnf"
             openssl req -config "$USER_MOK_DIR/mokconfig.cnf" -new -x509 -newkey rsa:2048 -nodes -days 36500 -outform DER -keyout "$MOK_PRIV" -out "$MOK_DER"
             openssl x509 -in "$MOK_DER" -inform DER -outform PEM -out "$MOK_PEM"
             sudo mokutil --import "$MOK_DER"
@@ -101,7 +101,7 @@ manage_autosign() {
     if [ ! -f "$AUTOSIGN_PATH" ] || [ "$INSTALL_AUTOSIGN" = true ]; then
         read -p "$L_AUTO_INST" inst_auto
         if [[ $inst_auto =~ ^[yY]$ ]]; then
-            sudo wget -q -O "$AUTOSIGN_PATH" https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/etc/kernel/postinst.d/sign_kernel_images
+            sudo wget -q -O "$AUTOSIGN_PATH" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/etc/kernel/postinst.d/sign_kernel_images"
             sudo sed -i "s|/root/MOK.priv|$SYS_MOK_DIR/MOK.priv|g" "$AUTOSIGN_PATH"
             sudo sed -i "s|/root/MOK.pem|$SYS_MOK_DIR/MOK.pem|g" "$AUTOSIGN_PATH"
             sudo chmod +x "$AUTOSIGN_PATH"
@@ -130,7 +130,6 @@ if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; exit 0; fi
 if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; exit 0; fi
 if [ "$SIGN_ONLY" = true ]; then manual_sign; exit 0; fi
 
-# DEB_COUNT robuster zählen
 DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
 DEB_COUNT=${DEB_COUNT//[[:space:]]/}
 
@@ -170,8 +169,25 @@ wget -q --show-progress "$DL_URL"
 tar -xf "linux-${KERNEL_VERSION}.tar.xz"
 cd "linux-${KERNEL_VERSION}"
 
-cp /boot/config-$(uname -r) ./.config
+cp "/boot/config-$(uname -r)" .config
 make olddefconfig
 
-# .config-fragment laden und LOCALVERSION auf -waydroid setzen
-wget -q '
+wget -q -O .config-fragment "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment"
+sed -i 's/-um790pro/-waydroid/g' .config-fragment
+./scripts/kconfig/merge_config.sh .config .config-fragment
+make olddefconfig
+
+# Header-Patch (Syntax korrigiert)
+if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
+    sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
+fi
+
+time nice make bindeb-pkg -j"$CPUCORES"
+
+manage_keys
+manage_autosign
+sudo dpkg -i "$CPATH"/linux-*.deb
+manual_sign
+
+kill "$SUDO_PID" 2>/dev/null || true
+green "$L_DONE"
