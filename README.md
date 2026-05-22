@@ -31,3 +31,41 @@ The script installs necessary dependencies automatically via `apt`. Generally re
 2. **Make it executable:**
    ```bash
    chmod +x kernel_upgrade
+
+3. **Install it system-wide (Recommended):**
+   ```bash
+   ./kernel_upgrade --install-system && source ~/.bashrc
+
+From now on, you can simply run kernel_upgrade from any directory in your terminal with full tab completion!
+
+⚙️ Parameters & Options
+Option                 Description
+-h, --help              Shows the comprehensive help page.
+--version               Shows the current script version (v2.9-stable).
+--install-system        Installs the script globally to ~/.scripts and sets up PATH.
+--kernelversion [VER]   Forces the build of a specific version (e.g., 6.12.1).
+--purge-custom          Triggers automated single-reboot cleanup for old custom kernel builds.
+--signonly              Only signs an existing kernel in /boot (no build).
+--installautosign       Installs the hook script for automatic signing during updates.
+--uninstallautosign     Removes the autosign script and optionally cleans up keys.
+
+🔐 Secure Boot Note
+If you use Secure Boot, the script will ask you during the first run whether to generate new MOK keys.
+
+Confirm the generation.
+
+Reboot your system after the script finishes.
+
+In the blue menu (MOK Manager), select: Enroll MOK -> Continue -> Yes -> Enter Password -> Reboot.
+The new kernel can now be booted securely.
+
+📂 File Structure
+~/.scripts/: Installation path for the global environment execution.
+
+~/Downloads: Location for extracting kernel sources and building .deb packages.
+
+~/.mok_keys: Storage for your private UEFI keys (PEM and binary DER formats).
+
+/var/lib/shim-signed/mok/: System deployment path for sbsign and dkms / kmodsign compatibility.
+
+/etc/kernel/postinst.d/: Installation path for the autosign hook.
