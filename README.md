@@ -1,4 +1,4 @@
-# Kernel Upgrade Script (v2.7)
+# Kernel Upgrade Script (v2.8)
 
 [🇩🇪 Wechseln zur deutschen Version](README_DE.md)
 
