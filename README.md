@@ -7,14 +7,21 @@ A fully automated bash script to compile, install, and sign current mainline Lin
 ## 🚀 Features
 
 - **🌐 OTA Auto-Updater:** Automatically checks the GitHub repository on execution. If a newer version is found, it hot-swaps itself and resumes your command instantly (even works with options like `-h`).
+
 - **📦 Global CLI Integration (`--install-system`):** Installs the script to `~/.scripts`, configures your `~/.bashrc` PATH, and activates native tab autocompletion.
+
 - **Fully Automated:** Downloads the latest stable kernel from `kernel.org`, configures, builds, and installs it.
+
 - **Waydroid Ready:** Automatically integrates `.config` fragments for **Binder** and **memfd** (required for modern Waydroid/Android containers, replacing the obsolete ashmem).
+
 - **Secure Boot & DKMS Support:** Automated MOK (Machine Owner Key) generation and signing of kernel images (`sbsign`). Deploys matching PEM and binary DER keys simultaneously to prevent SSL/ASN1 parsing errors during third-party module builds (e.g., DisplayLink `evdi` via `kmodsign`).
+
 - **🔄 Smart Version Validation:** Detects if the target kernel is already running or installed, prompting you with an interactive selection of the top 3 alternative stable releases instead of starting redundant builds.
+
 - **🧹 Automated Purge Sequence (`--purge-custom`):** Safely removes old `-waydroid` kernel remnants, header configurations, and debugging symbols. It uses a temporary `grub-reboot` hook to boot into your stock distribution kernel, performs a deep clean-up, and automatically resumes the script post-reboot.
 - **Autosign Integration:** Installs a post-install hook that automatically signs future kernel updates.
 - **Multilingual:** Automatically detects system locale (English/German).
+
 
 ## 🛠 Prerequisites
 
@@ -22,6 +29,7 @@ The script installs necessary dependencies automatically via `apt`. Generally re
 - A Debian-based system (Ubuntu, Linux Mint, Debian, etc.)
 - Active internet connection
 - Root privileges (via `sudo`)
+
 
 ## 📦 Installation & Usage
 
@@ -38,6 +46,7 @@ The script installs necessary dependencies automatically via `apt`. Generally re
 
 From now on, you can simply run kernel_upgrade from any directory in your terminal with full tab completion!
 
+
 ⚙️ Parameters & Options
  ```bash
 Option                 Description
@@ -51,6 +60,7 @@ Option                 Description
 --uninstallautosign     Removes the autosign script and optionally cleans up keys.
 ```
 
+
 🔐 Secure Boot Note
 If you use Secure Boot, the script will ask you during the first run whether to generate new MOK keys.
 
@@ -60,6 +70,7 @@ Reboot your system after the script finishes.
 
 In the blue menu (MOK Manager), select: Enroll MOK -> Continue -> Yes -> Enter Password -> Reboot.
 The new kernel can now be booted securely.
+
 
 📂 File Structure
 ~/.scripts/: Installation path for the global environment execution.
