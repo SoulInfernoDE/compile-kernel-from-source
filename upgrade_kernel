@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+
+# --- VERSION ---
+SCRIPT_VERSION="v2.8-stable"
+
+# --- SPRACH-ERKENNUNG ---
+if [[ ${LANG:-} == de* ]]; then
+    L_HELP="Nutzung: ./kernel_upgrade [OPTIONEN]\n\nEin vollautomatisches Skript zum Kompilieren, Installieren und Signieren eines aktuellen Mainline-Kernels.\n\nOptionen:\n  -h, --help               Zeigt diese Hilfe an.\n  --version                Zeigt die Skript-Version an.\n  --kernelversion [VER]    Erzwingt eine spezifische Kernel-Version.\n  --signonly               Nur händische Signierung eines Kernels in /boot.\n  --installautosign        Installiert das Autosignierungs-Skript.\n  --uninstallautosign      Entfernt das Autosignierungs-Skript.\n  --purge-custom           Löscht alte Custom-Kernel (erfordert einmaligen temporären Reboot).\n"
+    L_ERR_DEP="Fehler: Fehlende oder falsche Abhängigkeiten selektiert."
+    L_MOK_CHECK="Prüfe MOK Schlüssel..."
+    L_MOK_GEN="Keine Keys gefunden. Neue UEFI-Keys generieren? (y/n): "
+    L_MOK_REBOOT="Keys generiert. NACH REBOOT im MOK-Manager 'Enroll MOK' wählen!"
+    L_AUTO_INST="Soll das Autosign-Script (neu) installiert werden? (y/n): "
+    L_AUTO_DONE="Autosign-Script unter %s konfiguriert.\n"
+    L_DEB_FOUND="%s Kernel-Pakete gefunden. Build überspringen?\n"
+    L_SKIP_PROMPT="(y)es = nur Signieren & Installieren / (n)o = Neu bauen: "
+    L_INST_DEP="Installiere Abhängigkeiten..."
+    L_DL_VER="Nutze Version: %s\n"
+    L_DONE="Kernel Upgrade erfolgreich abgeschlossen!"
+    L_KEXIST="Kernel %s ist bereits gebaut/installiert!\n"
+    L_KALT_PROMPT="Wähle eine alternative stabilere Version oder tippe eine ein:\n"
+    L_PURGE_REBOOT="Für die Bereinigung muss in den offiziellen Kernel gebootet werden.\nDas System startet gleich NEU und setzt das Skript automatisch fort.\n"
+else
+    L_HELP="Usage: ./kernel_upgrade [OPTIONS]\n\nA fully automated script to compile, install, and sign a current mainline kernel.\n\nOptions:\n  -h, --help               Show this help.\n  --version                Show script version.\n  --kernelversion [VER]    Force a specific kernel version.\n  --signonly               Manually sign a kernel in /boot only.\n  --installautosign        Install the autosigning script.\n  --uninstallautosign      Remove the autosigning script.\n  --purge-custom           Deletes old custom kernels (requires a one-time temporary reboot).\n"
+    L_ERR_DEP="Error: missing or wrong dependency selection."
+    L_MOK_CHECK="Checking MOK keys..."
+    L_MOK_GEN="No keys found. Generate new UEFI keys? (y/n): "
+    L_MOK_REBOOT="Keys generated. AFTER REBOOT select 'Enroll MOK' in MOK manager!"
+    L_AUTO_INST="Should the autosign script be (re)installed? (y/n): "
+    L_AUTO_DONE="Autosign script configured at %s.\n"
+    L_DEB_FOUND="%s kernel packages found. Skip build?\n"
+    L_SKIP_PROMPT="(y)es = sign & install only / (n)o = build new: "
+    L_INST_DEP="Installing dependencies..."
+    L_DL_VER="Using version: %s\n"
+    L_DONE="Kernel upgrade completed successfully!"
+    L_KEXIST="Kernel %s is already built/installed!\n"
+    L_KALT_PROMPT="Select an alternative stable version or type one manually:\n"
+    L_PURGE_REBOOT="Purging requires booting into the official distro kernel.\nThe system will REBOOT now and resume the script automatically.\n"
+fi
+
+show_help() { echo -e "$L_HELP"; }
+
+# --- PARAMETER-STEUERUNG ---
+SIGN_ONLY=false
+INSTALL_AUTOSIGN=false
+UNINSTALL_AUTOSIGN=false
+PURGE_CUSTOM=false
+MANUAL_KERNEL_VERSION=""
+RESUMED_FROM_REBOOT=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -h|--help) show_help; exit 0 ;;
+    --version) echo "kernel_upgrade version $SCRIPT_VERSION"; exit 0 ;;
+    --signonly) SIGN_ONLY=true; shift ;;
+    --installautosign) INSTALL_AUTOSIGN=true; shift ;;
+    --uninstallautosign) UNINSTALL_AUTOSIGN=true; shift ;;
+    --purge-custom) PURGE_CUSTOM=true; shift ;;
+    --resumed) RESUMED_FROM_REBOOT=true; shift ;;
+    --kernelversion)
+      if [[ -n "${2:-}" && ! $2 == --* ]]; then MANUAL_KERNEL_VERSION="$2"; shift 2
+      else echo "Error: --kernelversion needs an argument"; exit 1; fi ;;
+    *) shift ;;
+  esac
+done
+
+set -euo pipefail
+
+# --- KONFIGURATION ---
+CPUCORES=$(nproc)
+CPATH="$HOME/Downloads"
+USER_MOK_DIR="$HOME/.mok_keys"
+SYS_MOK_DIR="/var/lib/shim-signed/mok"
+MOK_PRIV="$USER_MOK_DIR/MOK.priv"
+MOK_PEM="$USER_MOK_DIR/MOK.pem"
+MOK_DER="$USER_MOK_DIR/MOK.der"
+AUTOSIGN_PATH="/etc/kernel/postinst.d/sign_kernel_images"
+COMPLETION_PATH="/etc/bash_completion.d/kernel_upgrade"
+BUILDDEB_FILE="scripts/package/builddeb"
+MARKER="# Include .config in headers package"
+
+RED='\033[1;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
+red() { printf "%b%s%b\n" "$RED" "$*" "$NC"; }
+green() { printf "%b%s%b\n" "$GREEN" "$*" "$NC"; }
+yellow() { printf "%b%s%b\n" "$YELLOW" "$*" "$NC"; }
+
+# --- FUNKTIONEN ---
+
+setup_autocompletion() {
+    if [ ! -f "$COMPLETION_PATH" ]; then
+        sudo mkdir -p "$(dirname "$COMPLETION_PATH")"
+        sudo tee "$COMPLETION_PATH" > /dev/null << 'EOF'
+_kernel_upgrade_completions() {
+    local cur opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    opts="-h --help --version --kernelversion --signonly --installautosign --uninstallautosign --purge-custom"
+
+    if [[ ${cur} == -* ]] ; then
+        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+        return 0
+    fi
+}
+complete -F _kernel_upgrade_completions kernel_upgrade
+EOF
+        source "$COMPLETION_PATH" 2>/dev/null || true
+    fi
+}
+
+manage_keys() {
+    if [ ! -d "$USER_MOK_DIR" ]; then mkdir -p "$USER_MOK_DIR"; fi
+    if [ ! -f "$MOK_PRIV" ] || [ ! -f "$MOK_PEM" ]; then
+        yellow "$L_MOK_CHECK"
+        read -p "$L_MOK_GEN" gen_key
+        if [[ $gen_key =~ ^[yY]$ ]]; then
+            wget -q -O "$USER_MOK_DIR/mokconfig.cnf" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/mokconfig.cnf"
+            openssl req -config "$USER_MOK_DIR/mokconfig.cnf" -new -x509 -newkey rsa:2048 -nodes -days 36500 -outform DER -keyout "$MOK_PRIV" -out "$MOK_DER"
+            openssl x509 -in "$MOK_DER" -inform DER -outform PEM -out "$MOK_PEM"
+            sudo mokutil --import "$MOK_DER"
+            green "$L_MOK_REBOOT"
+        else
+            red "Aborted."; exit 1
+        fi
+    fi
+    sudo mkdir -p "$SYS_MOK_DIR"
+    sudo cp "$MOK_PRIV" "$MOK_PEM" "$MOK_DER" "$SYS_MOK_DIR/"
+    sudo chmod 600 "$SYS_MOK_DIR/MOK.priv"
+}
+
+manage_autosign() {
+    if [ ! -f "$AUTOSIGN_PATH" ] || [ "$INSTALL_AUTOSIGN" = true ]; then
+        read -p "$L_AUTO_INST" inst_auto
+        if [[ $inst_auto =~ ^[yY]$ ]]; then
+            sudo wget -q -O "$AUTOSIGN_PATH" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/etc/kernel/postinst.d/sign_kernel_images"
+            sudo sed -i "s|/root/MOK.priv|$SYS_MOK_DIR/MOK.priv|g" "$AUTOSIGN_PATH"
+            sudo sed -i "s|/root/MOK.pem|$SYS_MOK_DIR/MOK.pem|g" "$AUTOSIGN_PATH"
+            sudo chmod +x "$AUTOSIGN_PATH"
+            green "$(printf "$L_AUTO_DONE" "$AUTOSIGN_PATH")"
+        fi
+    fi
+}
+
+uninstall_autosign() {
+    [ -f "$AUTOSIGN_PATH" ] && sudo rm -v "$AUTOSIGN_PATH"
+    [ -f "$COMPLETION_PATH" ] && sudo rm -v "$COMPLETION_PATH"
+    read -p "Delete system keys in $SYS_MOK_DIR too? (y/n): " rm_keys
+    [[ $rm_keys =~ ^[yY]$ ]] && sudo rm -rf "$SYS_MOK_DIR"
+}
+
+manual_sign() {
+    manage_keys
+    if [ -n "${1:-}" ]; then
+        KVER_S="$1"
+    else
+        sudo ls /boot/vmlinuz-*
+        read -p "Version: " KVER_S
+    fi
+    sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" "/boot/vmlinuz-$KVER_S" --output "/boot/vmlinuz-$KVER_S"
+    sudo update-grub
+}
+
+purge_old_custom_kernels() {
+    yellow "Bereinige alte Custom-Kernel-Reste..."
+    # Verhindert, dass aus Versehen der aktuell gebootete Kernel gelöscht wird
+    local running_k
+    running_k=$(uname -r)
+    
+    # Finde alle installierten *-waydroid Pakete und lösche sie restlos
+    local custom_pkgs
+    custom_pkgs=$(dpkg -l | grep -E 'linux-(image|headers|image-unsigned)-.*-waydroid' | awk '{print $2}' || true)
+    if [ -n "$custom_pkgs" ]; then
+        for pkg in $custom_pkgs; do
+            if [[ "$pkg" == *"$running_k"* ]]; then
+                yellow "Überspringe Löschen von $pkg (aktiv geladen!)"
+            else
+                sudo apt-get purge -y "$pkg"
+            fi
+        done
+    fi
+    # Reste im Debug- oder Source-Verzeichnis löschen
+    sudo rm -rf /usr/lib/debug/lib/modules/*-waydroid
+    sudo rm -rf /usr/src/linux-headers-*-waydroid
+    sudo apt-get autoremove -y
+    sudo update-grub
+    green "Bereinigung abgeschlossen."
+}
+
+handle_one_time_reboot() {
+    yellow "$L_PURGE_REBOOT"
+    
+    # Finde den neuesten offiziellen Standard-Distributionskernel (z.B. -generic)
+    local target_kernel
+    target_kernel=$(awk -F\' '/menuentry / {print $2}' /boot/grub/grub.cfg | grep -v "waydroid" | head -n 1 || true)
+    
+    if [ -z "$target_kernel" ]; then
+        red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
+        exit 1
+    fi
+
+    # Erstelle den Autostart-Service für nach dem Reboot
+    local script_path
+    script_path=$(realpath "$0")
+    local current_user
+    current_user=$(whoami)
+    
+    # Argument-Kette rekonstruieren
+    local args="--purge-custom --resumed"
+    if [ -n "$MANUAL_KERNEL_VERSION" ]; then args="$args --kernelversion $MANUAL_KERNEL_VERSION"; fi
+
+    sudo tee /etc/systemd/system/kernel-upgrade-resume.service > /dev/null <<EOF
+[Unit]
+Description=Resume Kernel Upgrade Script after Reboot
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bash -c "sleep 5 && x-terminal-emulator -e $script_path $args"
+User=$current_user
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable kernel-upgrade-resume.service
+
+    # Einmaligen Boot-Eintrag für GRUB setzen
+    sudo grub-reboot "$target_kernel"
+    sleep 2
+    sudo reboot
+}
+
+# --- LOGIK ---
+
+sudo -v
+while true; do sudo -v; sleep 60; done &
+SUDO_PID=$!
+
+setup_autocompletion
+
+# Falls das Skript über den One-Time-Reboot zurückkehrt, Service sofort wieder sauber löschen
+if [ "$RESUMED_FROM_REBOOT" = true ]; then
+    sudo systemctl disable kernel-upgrade-resume.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/kernel-upgrade-resume.service
+    sudo systemctl daemon-reload
+    purge_old_custom_kernels
+fi
+
+if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
+if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
+if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
+
+# Wenn Bereinigung gewünscht ist, aber wir noch im Custom Kernel sind -> Reboot einleiten
+if [ "$PURGE_CUSTOM" = true ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
+    if uname -r | grep -q "waydroid"; then
+        handle_one_time_reboot
+        kill "$SUDO_PID"; exit 0
+    else
+        # Wir sind bereits im offiziellen Kernel, kein Reboot nötig
+        purge_old_custom_kernels
+    fi
+fi
+
+# --- KERNEL VERSIONSERMITTLUNG & ABGLEICH ---
+JSON="$(curl -fsSL https://www.kernel.org/releases.json)"
+
+if [ -n "$MANUAL_KERNEL_VERSION" ]; then
+    KERNEL_VERSION="$MANUAL_KERNEL_VERSION"
+else
+    KERNEL_VERSION=$(echo "$JSON" | jq -r '.releases[] | select(.moniker=="stable") | .version' | head -n 1)
+fi
+
+# CHECK: Ist dieser Kernel bereits aktiv oder installiert?
+CURRENT_RUNNING=$(uname -r)
+IS_INSTALLED=$(dpkg -l | grep "linux-image-${KERNEL_VERSION}-waydroid" || true)
+
+if [[ "$CURRENT_RUNNING" == "${KERNEL_VERSION}-waydroid" ]] || [ -n "$IS_INSTALLED" ]; then
+    yellow "$(printf "$L_KEXIST" "$KERNEL_VERSION")"
+    echo -e "$L_KALT_PROMPT"
+    
+    # Top 3 stabile Alternativen aus dem JSON fischen
+    mapfile -t ALTS < <(echo "$JSON" | jq -r '.releases[] | select(.moniker=="stable") | .version' | head -n 4 | grep -v "$KERNEL_VERSION" | head -n 3)
+    
+    for i in "${!ALTS[@]}"; do
+        echo "  [$((i+1))] ${ALTS[$i]}"
+    done
+    echo "  [4] Manuelle Version eintippen"
+    
+    read -p "Auswahl (1-4): " choice
+    case $choice in
+        1) KERNEL_VERSION="${ALTS[0]}" ;;
+        2) KERNEL_VERSION="${ALTS[1]}" ;;
+        3) KERNEL_VERSION="${ALTS[2]}" ;;
+        4) read -p "Bitte Wunschversion eingeben (z.B. 6.12.1): " KERNEL_VERSION ;;
+        *) yellow "Ungültige Auswahl. Fahre trotzdem mit $KERNEL_VERSION fort..." ;;
+    esac
+fi
+
+# Ab hier Standard-Download-Pfad generieren
+MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
+DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+
+# --- WEITERER STANDARDBLAUF (DOWNLOAD & BUILD) ---
+DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
+DEB_COUNT=${DEB_COUNT//[[:space:]]/}
+
+if [ "$DEB_COUNT" -gt 0 ]; then
+    yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
+    read -p "$L_SKIP_PROMPT" skip
+    if [[ $skip =~ ^[yY]$ ]]; then
+        sudo dpkg -i "$CPATH"/linux-*.deb
+        if [ ! -f "$AUTOSIGN_PATH" ] && [ -f "$MOK_PRIV" ]; then
+            EXT_VER=$(ls "$CPATH"/linux-image-*.deb 2>/dev/null | head -n 1 | sed -r 's/.*image-(.*)_.*\.deb/\1/')
+            [ -n "$EXT_VER" ] && manual_sign "$EXT_VER"
+        elif [ ! -f "$AUTOSIGN_PATH" ]; then
+            manual_sign ""
+        fi
+        kill "$SUDO_PID"; exit 0
+    fi
+fi
+
+yellow "$L_INST_DEP"
+sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils jq > /dev/null || { red "$L_ERR_DEP"; kill $SUDO_PID; exit 1; }
+
+cd "$CPATH"
+find . -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
+find . -maxdepth 1 -type f \( -name 'linux-*.tar.*' -o -name 'linux-*.zip' \) -exec rm -f {} +
+
+yellow "$(printf "$L_DL_VER" "$KERNEL_VERSION")"
+wget -q --show-progress "$DL_URL"
+tar -xf "linux-${KERNEL_VERSION}.tar.xz"
+cd "linux-${KERNEL_VERSION}"
+
+cp "/boot/config-$(uname -r)" .config
+make olddefconfig
+
+wget -q -O .config-fragment "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment"
+sed -i 's/-um790pro/-waydroid/g' .config-fragment
+./scripts/kconfig/merge_config.sh .config .config-fragment
+make olddefconfig
+
+if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
+    sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
+fi
+
+time nice make bindeb-pkg -j"$CPUCORES"
+
+FULL_KVER="${KERNEL_VERSION}-waydroid"
+
+# --- BARRIEREFREIE SIGNIERUNGS-LOGIK ---
+if [ -f "$AUTOSIGN_PATH" ]; then
+    manage_keys
+    sudo dpkg -i "$CPATH"/linux-*.deb
+elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+    manage_keys
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    manual_sign "$FULL_KVER"
+else
+    manage_keys
+    manage_autosign
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    if [ ! -f "$AUTOSIGN_PATH" ] ; then
+        manual_sign "$FULL_KVER"
+    fi
+fi
+
+kill "$SUDO_PID" 2>/dev/null || true
+green "$L_DONE"
