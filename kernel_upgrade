@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v2.3-stable"
+SCRIPT_VERSION="v2.5-stable"
 
 # --- SPRACH-ERKENNUNG ---
 if [[ ${LANG:-} == de* ]]; then
@@ -66,6 +66,7 @@ MOK_PRIV="$USER_MOK_DIR/MOK.priv"
 MOK_PEM="$USER_MOK_DIR/MOK.pem"
 MOK_DER="$USER_MOK_DIR/MOK.der"
 AUTOSIGN_PATH="/etc/kernel/postinst.d/sign_kernel_images"
+COMPLETION_PATH="/etc/bash_completion.d/kernel_upgrade"
 BUILDDEB_FILE="scripts/package/builddeb"
 MARKER="# Include .config in headers package"
 
@@ -76,6 +77,30 @@ green() { printf "%b%s%b\n" "$GREEN" "$*" "$NC"; }
 yellow() { printf "%b%s%b\n" "$YELLOW" "$*" "$NC"; }
 
 # --- FUNKTIONEN ---
+
+# Funktion zur stillen Installation der Tab-Vervollständigung
+setup_autocompletion() {
+    if [ ! -f "$COMPLETION_PATH" ]; then
+        sudo mkdir -p "$(dirname "$COMPLETION_PATH")"
+        sudo tee "$COMPLETION_PATH" > /dev/null << 'EOF'
+_kernel_upgrade_completions() {
+    local cur opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    opts="-h --help --version --kernelversion --signonly --installautosign --uninstallautosign"
+
+    if [[ ${cur} == -* ]] ; then
+        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+        return 0
+    fi
+}
+complete -F _kernel_upgrade_completions kernel_upgrade
+EOF
+        # In der aktuell laufenden Shell-Sitzung sofort aktivieren
+        # shellcheck source=/dev/null
+        source "$COMPLETION_PATH" 2>/dev/null || true
+    fi
+}
 
 manage_keys() {
     if [ ! -d "$USER_MOK_DIR" ]; then mkdir -p "$USER_MOK_DIR"; fi
@@ -112,23 +137,36 @@ manage_autosign() {
 
 uninstall_autosign() {
     [ -f "$AUTOSIGN_PATH" ] && sudo rm -v "$AUTOSIGN_PATH"
+    [ -f "$COMPLETION_PATH" ] && sudo rm -v "$COMPLETION_PATH"
     read -p "Delete system keys in $SYS_MOK_DIR too? (y/n): " rm_keys
     [[ $rm_keys =~ ^[yY]$ ]] && sudo rm -rf "$SYS_MOK_DIR"
 }
 
 manual_sign() {
     manage_keys
-    sudo ls /boot/vmlinuz-*
-    read -p "Version: " KVER_S
-    sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" "/boot/vmlinuz-$KVER_S"* --output "/boot/vmlinuz-$KVER_S"
+    if [ -n "${1:-}" ]; then
+        KVER_S="$1"
+    else
+        sudo ls /boot/vmlinuz-*
+        read -p "Version: " KVER_S
+    fi
+    sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" "/boot/vmlinuz-$KVER_S" --output "/boot/vmlinuz-$KVER_S"
     sudo update-grub
 }
 
 # --- LOGIK ---
 
-if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; exit 0; fi
-if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; exit 0; fi
-if [ "$SIGN_ONLY" = true ]; then manual_sign; exit 0; fi
+# Vorab Sudo-Rechte sichern, um alles Weitere (inkl. Completion) barrierefrei zu verarbeiten
+sudo -v
+while true; do sudo -v; sleep 60; done &
+SUDO_PID=$!
+
+# Auto-Completion still im Hintergrund einrichten
+setup_autocompletion
+
+if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
+if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
+if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
 
 DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
 DEB_COUNT=${DEB_COUNT//[[:space:]]/}
@@ -137,15 +175,16 @@ if [ "$DEB_COUNT" -gt 0 ]; then
     yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
     read -p "$L_SKIP_PROMPT" skip
     if [[ $skip =~ ^[yY]$ ]]; then
-        manual_sign; manage_autosign
         sudo dpkg -i "$CPATH"/linux-*.deb
-        exit 0
+        if [ ! -f "$AUTOSIGN_PATH" ] && [ -f "$MOK_PRIV" ]; then
+            EXT_VER=$(ls "$CPATH"/linux-image-*.deb 2>/dev/null | head -n 1 | sed -r 's/.*image-(.*)_.*\.deb/\1/')
+            [ -n "$EXT_VER" ] && manual_sign "$EXT_VER"
+        elif [ ! -f "$AUTOSIGN_PATH" ]; then
+            manual_sign ""
+        fi
+        kill "$SUDO_PID"; exit 0
     fi
 fi
-
-sudo -v
-while true; do sudo -v; sleep 60; done &
-SUDO_PID=$!
 
 yellow "$L_INST_DEP"
 sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils jq > /dev/null || { red "$L_ERR_DEP"; kill $SUDO_PID; exit 1; }
@@ -177,17 +216,28 @@ sed -i 's/-um790pro/-waydroid/g' .config-fragment
 ./scripts/kconfig/merge_config.sh .config .config-fragment
 make olddefconfig
 
-# Header-Patch (Syntax korrigiert)
 if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
     sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
 fi
 
 time nice make bindeb-pkg -j"$CPUCORES"
 
-manage_keys
-manage_autosign
-sudo dpkg -i "$CPATH"/linux-*.deb
-manual_sign
+FULL_KVER="${KERNEL_VERSION}-waydroid"
+
+# --- BARRIEREFREIE SIGNIERUNGS-LOGIK ---
+if [ -f "$AUTOSIGN_PATH" ]; then
+    sudo dpkg -i "$CPATH"/linux-*.deb
+elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    manual_sign "$FULL_KVER"
+else
+    manage_keys
+    manage_autosign
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    if [ ! -f "$AUTOSIGN_PATH" ]; then
+        manual_sign "$FULL_KVER"
+    fi
+fi
 
 kill "$SUDO_PID" 2>/dev/null || true
 green "$L_DONE"
