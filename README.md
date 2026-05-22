@@ -49,7 +49,7 @@ From now on, you can simply run kernel_upgrade from any directory in your termin
 
 ⚙️ Parameters & Options
  ```bash
-Option                 Description
+Option                  Description
 -h, --help              Shows the comprehensive help page.
 --version               Shows the current script version (v2.9-stable).
 --install-system        Installs the script globally to ~/.scripts and sets up PATH.
