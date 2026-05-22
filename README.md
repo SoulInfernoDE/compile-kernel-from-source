@@ -39,6 +39,7 @@ The script installs necessary dependencies automatically via `apt`. Generally re
 From now on, you can simply run kernel_upgrade from any directory in your terminal with full tab completion!
 
 ⚙️ Parameters & Options
+ ```bash
 Option                 Description
 -h, --help              Shows the comprehensive help page.
 --version               Shows the current script version (v2.9-stable).
@@ -48,6 +49,7 @@ Option                 Description
 --signonly              Only signs an existing kernel in /boot (no build).
 --installautosign       Installs the hook script for automatic signing during updates.
 --uninstallautosign     Removes the autosign script and optionally cleans up keys.
+```
 
 🔐 Secure Boot Note
 If you use Secure Boot, the script will ask you during the first run whether to generate new MOK keys.
