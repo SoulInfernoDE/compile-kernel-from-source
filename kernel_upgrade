@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.1-stable"
+SCRIPT_VERSION="v3.2-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -24,8 +24,9 @@ check_for_updates() {
         yellow "Update gefunden: $remote_version (Aktuell: $SCRIPT_VERSION)"
         yellow "Lade neue Version herunter..."
         
+        # FIX: BASH_SOURCE[0] findet den absoluten Pfad, selbst wenn der Aufruf über globale $PATH-Variablen (ohne Pfad) geschieht
         local script_path
-        script_path=$(realpath "$0")
+        script_path=$(realpath "${BASH_SOURCE[0]}")
         
         local tmp_file
         tmp_file=$(mktemp)
@@ -238,7 +239,6 @@ purge_old_custom_kernels() {
 handle_one_time_reboot() {
     yellow "$L_PURGE_REBOOT"
     
-    # 1. GRUB Submenü-Struktur parsen (Format: "Submenü>Eintrag")
     local target_kernel
     target_kernel=$(sudo awk -F\' '
         /^submenu / { submen=$2 }
@@ -255,19 +255,16 @@ handle_one_time_reboot() {
     fi
     bwhite "Gewählter Kernel für Reboot: $target_kernel"
 
-    # 2. Den echten Benutzer ermitteln (wer hat sudo aufgerufen?)
     local current_user="${SUDO_USER:-$(whoami)}"
     local user_home
     user_home=$(eval echo "~$current_user")
     local autostart_dir="$user_home/.config/autostart"
 
-    # 3. Argumente rekonstruieren
     local script_path
-    script_path=$(realpath "$0")
+    script_path=$(realpath "${BASH_SOURCE[0]}")
     local args="--purge-custom --resumed"
     if [ -n "$MANUAL_KERNEL_VERSION" ]; then args="$args --kernelversion $MANUAL_KERNEL_VERSION"; fi
 
-    # 4. XDG Autostart-Datei im User-Profil anlegen (Startet grafisches Terminal nach Login)
     sudo -u "$current_user" mkdir -p "$autostart_dir"
     cat <<EOF | sudo -u "$current_user" tee "$autostart_dir/kernel_upgrade_resume.desktop" > /dev/null
 [Desktop Entry]
@@ -279,10 +276,8 @@ X-GNOME-Autostart-enabled=true
 Name=Kernel Upgrade Resume
 EOF
 
-    # 5. GRUB Reboot-Eintrag temporär setzen
     sudo grub-reboot "$target_kernel"
     
-    # 6. Countdown-Logik
     echo ""
     for i in {10..1}; do
         printf "$L_REBOOT_COUNT" "$i"
@@ -294,20 +289,17 @@ EOF
 
 # --- LOGIK-PHASE ---
 
-# 1. Systemweite Installation sofort abfangen
 if [ "$INSTALL_SYSTEM" = true ]; then
     install_systemwide
     exit 0
 fi
 
-# 2. Sudo-Rechte sichern
 sudo -v
 while true; do sudo -v; sleep 60; done &
 SUDO_PID=$!
 
 setup_autocompletion
 
-# 3. Falls wir aus dem One-Time-Reboot kommen: XDG Autostart aufräumen & Reste fegen
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
     local current_user="${SUDO_USER:-$(whoami)}"
     local user_home=$(eval echo "~$current_user")
@@ -315,28 +307,24 @@ if [ "$RESUMED_FROM_REBOOT" = true ]; then
     purge_old_custom_kernels
 fi
 
-# 4. Exklusive Wartungsmodi abfangen
 if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
 if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
 if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
 
-# 5. CRITICAL ENVIRONMENT-CHECK: Läuft aktuell ein Custom Kernel?
 if uname -r | grep -q "waydroid" && [ "$RESUMED_FROM_REBOOT" = false ]; then
     handle_one_time_reboot
     kill "$SUDO_PID"
     exit 0
 fi
 
-# 6. Falls manuell --purge-custom gerufen wurde, wir aber schon im Stock-Kernel sind
 if [ "$PURGE_CUSTOM" = true ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
     purge_old_custom_kernels
 fi
 
 # ==============================================================================
-# AB HIER ERST: Netzwertraffic & Kompilier-Infrastruktur (Sichere Umgebung gewährt)
+# AB HIER ERST: Netzwertraffic & Kompilier-Infrastruktur
 # ==============================================================================
 
-# --- KERNEL VERSIONSERMITTLUNG & ABGLEICH ---
 JSON="$(curl -fsSL https://www.kernel.org/releases.json)"
 
 if [ -n "$MANUAL_KERNEL_VERSION" ]; then
@@ -360,78 +348,3 @@ if [[ "$CURRENT_RUNNING" == "${KERNEL_VERSION}-waydroid" ]] || [ -n "$IS_INSTALL
     read -p "Auswahl (1-4): " choice
     case $choice in
         1) KERNEL_VERSION="${ALTS[0]}" ;;
-        2) KERNEL_VERSION="${ALTS[1]}" ;;
-        3) KERNEL_VERSION="${ALTS[2]}" ;;
-        4) read -p "Bitte Wunschversion eingeben (z.B. 6.12.1): " KERNEL_VERSION ;;
-        *) yellow "Ungültige Auswahl. Fahre trotzdem mit $KERNEL_VERSION fort..." ;;
-    esac
-fi
-
-MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
-DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
-
-# --- WEITERER STANDARD-PFAD (DOWNLOAD & BUILD) ---
-DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
-DEB_COUNT=${DEB_COUNT//[[:space:]]/}
-
-if [ "$DEB_COUNT" -gt 0 ]; then
-    yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
-    read -p "$L_SKIP_PROMPT" skip
-    if [[ $skip =~ ^[yY]$ ]]; then
-        sudo dpkg -i "$CPATH"/linux-*.deb
-        if [ ! -f "$AUTOSIGN_PATH" ] && [ -f "$MOK_PRIV" ]; then
-            EXT_VER=$(ls "$CPATH"/linux-image-*.deb 2>/dev/null | head -n 1 | sed -r 's/.*image-(.*)_.*\.deb/\1/')
-            [ -n "$EXT_VER" ] && manual_sign "$EXT_VER"
-        elif [ ! -f "$AUTOSIGN_PATH" ]; then
-            manual_sign ""
-        fi
-        kill "$SUDO_PID"; exit 0
-    fi
-fi
-
-yellow "$L_INST_DEP"
-sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils jq > /dev/null || { red "$L_ERR_DEP"; kill $SUDO_PID; exit 1; }
-
-cd "$CPATH"
-find . -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
-find . -maxdepth 1 -type f \( -name 'linux-*.tar.*' -o -name 'linux-*.zip' \) -exec rm -f {} +
-
-yellow "$(printf "$L_DL_VER" "$KERNEL_VERSION")"
-wget -q --show-progress "$DL_URL"
-tar -xf "linux-${KERNEL_VERSION}.tar.xz"
-cd "linux-${KERNEL_VERSION}"
-
-cp "/boot/config-$(uname -r)" .config
-make olddefconfig
-
-wget -q -O .config-fragment "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment"
-sed -i 's/-um790pro/-waydroid/g' .config-fragment
-./scripts/kconfig/merge_config.sh .config .config-fragment
-make olddefconfig
-
-if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
-    sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
-fi
-
-time nice make bindeb-pkg -j"$CPUCORES"
-
-FULL_KVER="${KERNEL_VERSION}-waydroid"
-
-if [ -f "$AUTOSIGN_PATH" ]; then
-    manage_keys
-    sudo dpkg -i "$CPATH"/linux-*.deb
-elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
-    manage_keys
-    sudo dpkg -i "$CPATH"/linux-*.deb
-    manual_sign "$FULL_KVER"
-else
-    manage_keys
-    manage_autosign
-    sudo dpkg -i "$CPATH"/linux-*.deb
-    if [ ! -f "$AUTOSIGN_PATH" ] ; then
-        manual_sign "$FULL_KVER"
-    fi
-fi
-
-kill "$SUDO_PID" 2>/dev/null || true
-green "$L_DONE"
