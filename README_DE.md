@@ -1,4 +1,4 @@
-# Kernel Upgrade Script (v3.0)
+# Kernel Upgrade Script (v3.5)
 
 [🇺🇸 Switch to English version](README.md)
 
