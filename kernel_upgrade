@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.0-stable"
+SCRIPT_VERSION="v3.0.1-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -234,7 +234,8 @@ purge_old_custom_kernels() {
 handle_one_time_reboot() {
     yellow "$L_PURGE_REBOOT"
     local target_kernel
-    target_kernel=$(awk -F\' '/menuentry / {print $2}' /boot/grub/grub.cfg | grep -v "waydroid" | head -n 1 || true)
+    # Hier ist der Sudo-Fix für awk
+    target_kernel=$(sudo awk -F\' '/menuentry / {print $2}' /boot/grub/grub.cfg | grep -v "waydroid" | head -n 1 || true)
     
     if [ -z "$target_kernel" ]; then
         red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
@@ -310,7 +311,6 @@ fi
 if [ "$PURGE_CUSTOM" = true ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
     purge_old_custom_kernels
 fi
-
 
 # ==============================================================================
 # AB HIER ERST: Netzwertraffic & Kompilier-Infrastruktur (Sichere Umgebung gewährt)
