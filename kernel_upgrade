@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.0.2-stable"
+SCRIPT_VERSION="v3.1-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -31,7 +31,6 @@ check_for_updates() {
         tmp_file=$(mktemp)
         if curl -sL --max-time 10 "$UPDATE_URL" -o "$tmp_file"; then
             chmod +x "$tmp_file"
-            # ATOMARER BEFEHL: Ersetzt die Datei im Dateisystem, ohne die laufende Inode zu korrumpieren
             mv "$tmp_file" "$script_path"
             green "Update erfolgreich! Skript startet neu..."
             exec "$script_path" "$@"
@@ -60,7 +59,8 @@ if [[ ${LANG:-} == de* ]]; then
     L_DONE="Kernel Upgrade erfolgreich abgeschlossen!"
     L_KEXIST="Kernel %s ist bereits gebaut/installiert!\n"
     L_KALT_PROMPT="Wähle eine alternative stabilere Version oder tippe eine ein:\n"
-    L_PURGE_REBOOT="Sicherheits-Boot: Es läuft ein Custom-Kernel oder eine Bereinigung wurde angefordert.\nDas System startet gleich NEU in den offiziellen Distributions-Kernel, um Fehler zu vermeiden.\nDas Skript setzt sich nach dem Reboot vollautomatisch fort.\n"
+    L_PURGE_REBOOT="Sicherheits-Boot: Es läuft ein Custom-Kernel oder eine Bereinigung wurde angefordert.\nDas System startet in den offiziellen Distributions-Kernel, um Fehler zu vermeiden.\nDas Skript setzt sich nach dem Reboot und deinem Login vollautomatisch fort.\n"
+    L_REBOOT_COUNT="\r\033[1;33mNeustart in %s Sekunden... (STRG+C zum Abbrechen)\033[0m  "
 else
     L_HELP="Usage: kernel_upgrade [OPTIONS]\n\nA fully automated script to compile, install, and sign.\n\nOptions:\n  -h, --help               Show this help.\n  --version                Show script version.\n  --kernelversion [VER]    Force a specific kernel version.\n  --signonly               Manually sign a kernel in /boot only.\n  --installautosign        Install the autosigning script.\n  --uninstallautosign      Remove the autosigning script.\n  --purge-custom           Deletes old custom kernels (enforces safe reboot).\n  --install-system         Installs the script globally in ~/.scripts.\n"
     L_ERR_DEP="Error: missing or wrong dependency selection."
@@ -76,7 +76,8 @@ else
     L_DONE="Kernel upgrade completed successfully!"
     L_KEXIST="Kernel %s is already built/installed!\n"
     L_KALT_PROMPT="Select an alternative stable version or type one manually:\n"
-    L_PURGE_REBOOT="Safety Boot: A custom kernel is active or a purge was requested.\nThe system will REBOOT into the official stock kernel now to prevent build environment pollution.\nThe script will resume automatically after reboot.\n"
+    L_PURGE_REBOOT="Safety Boot: A custom kernel is active or a purge was requested.\nThe system will REBOOT into the official stock kernel now to prevent build environment pollution.\nThe script will resume automatically after you log in.\n"
+    L_REBOOT_COUNT="\r\033[1;33mRebooting in %s seconds... (Press CTRL+C to abort)\033[0m  "
 fi
 
 show_help() { echo -e "$L_HELP"; }
@@ -236,40 +237,58 @@ purge_old_custom_kernels() {
 
 handle_one_time_reboot() {
     yellow "$L_PURGE_REBOOT"
+    
+    # 1. GRUB Submenü-Struktur parsen (Format: "Submenü>Eintrag")
     local target_kernel
-    target_kernel=$(sudo awk -F\' '/menuentry / {print $2}' /boot/grub/grub.cfg | grep -v "waydroid" | head -n 1 || true)
+    target_kernel=$(sudo awk -F\' '
+        /^submenu / { submen=$2 }
+        /^[[:space:]]*menuentry / {
+            title=$2
+            if(submen) print submen ">" title
+            else print title
+        }
+    ' /boot/grub/grub.cfg | grep -iE "linux" | grep -vi "waydroid" | grep -vi "recovery" | head -n 1 || true)
     
     if [ -z "$target_kernel" ]; then
         red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
         exit 1
     fi
+    bwhite "Gewählter Kernel für Reboot: $target_kernel"
 
+    # 2. Den echten Benutzer ermitteln (wer hat sudo aufgerufen?)
+    local current_user="${SUDO_USER:-$(whoami)}"
+    local user_home
+    user_home=$(eval echo "~$current_user")
+    local autostart_dir="$user_home/.config/autostart"
+
+    # 3. Argumente rekonstruieren
     local script_path
     script_path=$(realpath "$0")
-    local current_user
-    current_user=$(whoami)
     local args="--purge-custom --resumed"
     if [ -n "$MANUAL_KERNEL_VERSION" ]; then args="$args --kernelversion $MANUAL_KERNEL_VERSION"; fi
 
-    sudo tee /etc/systemd/system/kernel-upgrade-resume.service > /dev/null <<EOF
-[Unit]
-Description=Resume Kernel Upgrade Script after Reboot
-After=multi-user.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/bash -c "sleep 5 && x-terminal-emulator -e $script_path $args"
-User=$current_user
-Environment=DISPLAY=:0
-
-[Install]
-WantedBy=multi-user.target
+    # 4. XDG Autostart-Datei im User-Profil anlegen (Startet grafisches Terminal nach Login)
+    sudo -u "$current_user" mkdir -p "$autostart_dir"
+    cat <<EOF | sudo -u "$current_user" tee "$autostart_dir/kernel_upgrade_resume.desktop" > /dev/null
+[Desktop Entry]
+Type=Application
+Exec=x-terminal-emulator -e bash -c "echo '--- Kernel Upgrade Auto-Resume ---'; sleep 2; sudo $script_path $args; echo 'Fertig.'; read -p 'Druecke Enter zum Schliessen...'"
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=Kernel Upgrade Resume
 EOF
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable kernel-upgrade-resume.service
+    # 5. GRUB Reboot-Eintrag temporär setzen
     sudo grub-reboot "$target_kernel"
-    sleep 2
+    
+    # 6. Countdown-Logik
+    echo ""
+    for i in {10..1}; do
+        printf "$L_REBOOT_COUNT" "$i"
+        sleep 1
+    done
+    echo -e "\n\033[0;32mNeustart wird jetzt durchgeführt...\033[0m"
     sudo reboot
 }
 
@@ -288,11 +307,11 @@ SUDO_PID=$!
 
 setup_autocompletion
 
-# 3. Falls wir aus dem One-Time-Reboot kommen: Systemd-Service aufräumen & Reste fegen
+# 3. Falls wir aus dem One-Time-Reboot kommen: XDG Autostart aufräumen & Reste fegen
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
-    sudo systemctl disable kernel-upgrade-resume.service 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/kernel-upgrade-resume.service
-    sudo systemctl daemon-reload
+    local current_user="${SUDO_USER:-$(whoami)}"
+    local user_home=$(eval echo "~$current_user")
+    sudo -u "$current_user" rm -f "$user_home/.config/autostart/kernel_upgrade_resume.desktop"
     purge_old_custom_kernels
 fi
 
