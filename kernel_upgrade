@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v2.9-stable"
+SCRIPT_VERSION="v3.0-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -17,7 +17,6 @@ bwhite() { printf "%b%s%b\n" "$BWHITE" "$*" "$NC"; }
 
 # --- AUTO-UPDATE FUNKTION ---
 check_for_updates() {
-    # Stilles Prüfen im Hintergrund mit 3 Sekunden Timeout (verhindert Hängenbleiben ohne Internet)
     local remote_version
     remote_version=$(curl -sL --max-time 3 "$UPDATE_URL" | grep -m 1 '^SCRIPT_VERSION=' | cut -d'"' -f2 || true)
     
@@ -32,7 +31,6 @@ check_for_updates() {
             rm -f "$tmp_file"
             chmod +x "$0"
             green "Update erfolgreich! Skript startet neu..."
-            # Starte das aktualisierte Skript mit exakt denselben Parametern neu
             exec "$0" "$@"
         else
             red "Fehler beim Herunterladen. Fahre mit der aktuellen Version fort..."
@@ -41,12 +39,11 @@ check_for_updates() {
     fi
 }
 
-# Direkt als Erstes Updates prüfen (selbst bei -h oder leeren Parametern)
 check_for_updates "$@"
 
 # --- SPRACH-ERKENNUNG ---
 if [[ ${LANG:-} == de* ]]; then
-    L_HELP="Nutzung: ./kernel_upgrade [OPTIONEN]\n\nEin vollautomatisches Skript zum Kompilieren, Installieren und Signieren.\n\nOptionen:\n  -h, --help               Zeigt diese Hilfe an.\n  --version                Zeigt die Skript-Version an.\n  --kernelversion [VER]    Erzwingt eine spezifische Kernel-Version.\n  --signonly               Nur händische Signierung eines Kernels in /boot.\n  --installautosign        Installiert das Autosignierungs-Skript.\n  --uninstallautosign      Entfernt das Autosignierungs-Skript.\n  --purge-custom           Löscht alte Custom-Kernel (benötigt Reboot).\n  --install-system         Installiert das Skript systemweit in ~/.scripts.\n"
+    L_HELP="Nutzung: kernel_upgrade [OPTIONEN]\n\nEin vollautomatisches Skript zum Kompilieren, Installieren und Signieren.\n\nOptionen:\n  -h, --help               Zeigt diese Hilfe an.\n  --version                Zeigt die Skript-Version an.\n  --kernelversion [VER]    Erzwingt eine spezifische Kernel-Version.\n  --signonly               Nur händische Signierung eines Kernels in /boot.\n  --installautosign        Installiert das Autosignierungs-Skript.\n  --uninstallautosign      Entfernt das Autosignierungs-Skript.\n  --purge-custom           Löscht alte Custom-Kernel (erzwingt safe reboot).\n  --install-system         Installiert das Skript systemweit in ~/.scripts.\n"
     L_ERR_DEP="Fehler: Fehlende oder falsche Abhängigkeiten selektiert."
     L_MOK_CHECK="Prüfe MOK Schlüssel..."
     L_MOK_GEN="Keine Keys gefunden. Neue UEFI-Keys generieren? (y/n): "
@@ -60,9 +57,9 @@ if [[ ${LANG:-} == de* ]]; then
     L_DONE="Kernel Upgrade erfolgreich abgeschlossen!"
     L_KEXIST="Kernel %s ist bereits gebaut/installiert!\n"
     L_KALT_PROMPT="Wähle eine alternative stabilere Version oder tippe eine ein:\n"
-    L_PURGE_REBOOT="Für die Bereinigung muss in den offiziellen Kernel gebootet werden.\nDas System startet gleich NEU und setzt das Skript automatisch fort.\n"
+    L_PURGE_REBOOT="Sicherheits-Boot: Es läuft ein Custom-Kernel oder eine Bereinigung wurde angefordert.\nDas System startet gleich NEU in den offiziellen Distributions-Kernel, um Fehler zu vermeiden.\nDas Skript setzt sich nach dem Reboot vollautomatisch fort.\n"
 else
-    L_HELP="Usage: ./kernel_upgrade [OPTIONS]\n\nA fully automated script to compile, install, and sign.\n\nOptions:\n  -h, --help               Show this help.\n  --version                Show script version.\n  --kernelversion [VER]    Force a specific kernel version.\n  --signonly               Manually sign a kernel in /boot only.\n  --installautosign        Install the autosigning script.\n  --uninstallautosign      Remove the autosigning script.\n  --purge-custom           Deletes old custom kernels (requires reboot).\n  --install-system         Installs the script globally in ~/.scripts.\n"
+    L_HELP="Usage: kernel_upgrade [OPTIONS]\n\nA fully automated script to compile, install, and sign.\n\nOptions:\n  -h, --help               Show this help.\n  --version                Show script version.\n  --kernelversion [VER]    Force a specific kernel version.\n  --signonly               Manually sign a kernel in /boot only.\n  --installautosign        Install the autosigning script.\n  --uninstallautosign      Remove the autosigning script.\n  --purge-custom           Deletes old custom kernels (enforces safe reboot).\n  --install-system         Installs the script globally in ~/.scripts.\n"
     L_ERR_DEP="Error: missing or wrong dependency selection."
     L_MOK_CHECK="Checking MOK keys..."
     L_MOK_GEN="No keys found. Generate new UEFI keys? (y/n): "
@@ -76,7 +73,7 @@ else
     L_DONE="Kernel upgrade completed successfully!"
     L_KEXIST="Kernel %s is already built/installed!\n"
     L_KALT_PROMPT="Select an alternative stable version or type one manually:\n"
-    L_PURGE_REBOOT="Purging requires booting into the official distro kernel.\nThe system will REBOOT now and resume the script automatically.\n"
+    L_PURGE_REBOOT="Safety Boot: A custom kernel is active or a purge was requested.\nThe system will REBOOT into the official stock kernel now to prevent build environment pollution.\nThe script will resume automatically after reboot.\n"
 fi
 
 show_help() { echo -e "$L_HELP"; }
@@ -148,32 +145,20 @@ EOF
 install_systemwide() {
     local script_dir="$HOME/.scripts"
     local bashrc_file="$HOME/.bashrc"
-    # Nutze den Base-Namen des aktuellen Skripts, falls es lokal anders heißt
     local target_name="kernel_upgrade"
     local target_file="$script_dir/$target_name"
 
     yellow "Starte systemweite Installation..."
-
-    if [ ! -d "$script_dir" ]; then
-        green "Erstelle Verzeichnis: $script_dir"
-        mkdir -p "$script_dir"
-    fi
+    [ ! -d "$script_dir" ] && mkdir -p "$script_dir"
 
     if ! grep -q "PATH.*$HOME/.scripts" "$bashrc_file"; then
-        yellow "Füge $script_dir zur ~/.bashrc hinzu..."
         echo -e '\n# Custom scripts environment\nexport PATH="$PATH:$HOME/.scripts"' >> "$bashrc_file"
-        green "PATH wurde ergänzt. (Wird beim nächsten Terminal-Start aktiv oder mit 'source ~/.bashrc')"
     fi
 
-    yellow "Kopiere Skript nach $target_file..."
     cp "$0" "$target_file"
     chmod +x "$target_file"
-
     setup_autocompletion
-
-    echo ""
-    green "Systemweite Installation abgeschlossen!"
-    bwhite "Du kannst das Skript künftig einfach mit 'kernel_upgrade' von überall aus starten."
+    green "Systemweite Installation abgeschlossen! Starte das Terminal neu oder führe 'source ~/.bashrc' aus."
 }
 
 manage_keys() {
@@ -218,18 +203,13 @@ uninstall_autosign() {
 
 manual_sign() {
     manage_keys
-    if [ -n "${1:-}" ]; then
-        KVER_S="$1"
-    else
-        sudo ls /boot/vmlinuz-*
-        read -p "Version: " KVER_S
-    fi
+    if [ -n "${1:-}" ]; then KVER_S="$1"; else sudo ls /boot/vmlinuz-*; read -p "Version: " KVER_S; fi
     sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" "/boot/vmlinuz-$KVER_S" --output "/boot/vmlinuz-$KVER_S"
     sudo update-grub
 }
 
 purge_old_custom_kernels() {
-    yellow "Bereinige alte Custom-Kernel-Reste..."
+    yellow "Bereinige alte Custom-Kernel-Reste aus dem System..."
     local running_k
     running_k=$(uname -r)
     
@@ -248,7 +228,7 @@ purge_old_custom_kernels() {
     sudo rm -rf /usr/src/linux-headers-*-waydroid
     sudo apt-get autoremove -y
     sudo update-grub
-    green "Bereinigung abgeschlossen."
+    green "System-Bereinigung erfolgreich abgeschlossen."
 }
 
 handle_one_time_reboot() {
@@ -290,20 +270,22 @@ EOF
     sudo reboot
 }
 
-# --- LOGIK ---
+# --- LOGIK-PHASE ---
 
-# Ausführen der systemweiten Installation, wenn gefordert
+# 1. Systemweite Installation sofort abfangen
 if [ "$INSTALL_SYSTEM" = true ]; then
     install_systemwide
     exit 0
 fi
 
+# 2. Sudo-Rechte sichern
 sudo -v
 while true; do sudo -v; sleep 60; done &
 SUDO_PID=$!
 
 setup_autocompletion
 
+# 3. Falls wir aus dem One-Time-Reboot kommen: Systemd-Service aufräumen & Reste fegen
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
     sudo systemctl disable kernel-upgrade-resume.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/kernel-upgrade-resume.service
@@ -311,18 +293,28 @@ if [ "$RESUMED_FROM_REBOOT" = true ]; then
     purge_old_custom_kernels
 fi
 
+# 4. Exklusive Wartungsmodi abfangen
 if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
 if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
 if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
 
-if [ "$PURGE_CUSTOM" = true ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
-    if uname -r | grep -q "waydroid"; then
-        handle_one_time_reboot
-        kill "$SUDO_PID"; exit 0
-    else
-        purge_old_custom_kernels
-    fi
+# 5. CRITICAL ENVIRONMENT-CHECK: Läuft aktuell ein Custom Kernel?
+# Falls ja, MÜSSEN wir JETZT abbrechen und rebooten, BEVOR irgendwas geladen oder gebaut wird!
+if uname -r | grep -q "waydroid" && [ "$RESUMED_FROM_REBOOT" = false ]; then
+    handle_one_time_reboot
+    kill "$SUDO_PID"
+    exit 0
 fi
+
+# 6. Falls manuell --purge-custom gerufen wurde, wir aber schon im Stock-Kernel sind
+if [ "$PURGE_CUSTOM" = true ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
+    purge_old_custom_kernels
+fi
+
+
+# ==============================================================================
+# AB HIER ERST: Netzwertraffic & Kompilier-Infrastruktur (Sichere Umgebung gewährt)
+# ==============================================================================
 
 # --- KERNEL VERSIONSERMITTLUNG & ABGLEICH ---
 JSON="$(curl -fsSL https://www.kernel.org/releases.json)"
@@ -342,9 +334,7 @@ if [[ "$CURRENT_RUNNING" == "${KERNEL_VERSION}-waydroid" ]] || [ -n "$IS_INSTALL
     
     mapfile -t ALTS < <(echo "$JSON" | jq -r '.releases[] | select(.moniker=="stable") | .version' | head -n 4 | grep -v "$KERNEL_VERSION" | head -n 3)
     
-    for i in "${!ALTS[@]}"; do
-        echo "  [$((i+1))] ${ALTS[$i]}"
-    done
+    for i in "${!ALTS[@]}"; do echo "  [$((i+1))] ${ALTS[$i]}"; done
     echo "  [4] Manuelle Version eintippen"
     
     read -p "Auswahl (1-4): " choice
@@ -360,7 +350,7 @@ fi
 MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
 DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
 
-# --- WEITERER STANDARDBLAUF (DOWNLOAD & BUILD) ---
+# --- WEITERER STANDARD-PFAD (DOWNLOAD & BUILD) ---
 DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
 DEB_COUNT=${DEB_COUNT//[[:space:]]/}
 
