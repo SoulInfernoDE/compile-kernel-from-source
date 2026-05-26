@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.2-stable"
+SCRIPT_VERSION="v3.5-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -22,12 +22,8 @@ check_for_updates() {
     
     if [ -n "$remote_version" ] && [ "$remote_version" != "$SCRIPT_VERSION" ]; then
         yellow "Update gefunden: $remote_version (Aktuell: $SCRIPT_VERSION)"
-        yellow "Lade neue Version herunter..."
-        
-        # FIX: BASH_SOURCE[0] findet den absoluten Pfad, selbst wenn der Aufruf über globale $PATH-Variablen (ohne Pfad) geschieht
         local script_path
         script_path=$(realpath "${BASH_SOURCE[0]}")
-        
         local tmp_file
         tmp_file=$(mktemp)
         if curl -sL --max-time 10 "$UPDATE_URL" -o "$tmp_file"; then
@@ -236,18 +232,22 @@ purge_old_custom_kernels() {
     green "System-Bereinigung erfolgreich abgeschlossen."
 }
 
+handle_resume() {
+    local actual_user="${SUDO_USER:-$(whoami)}"
+    local user_home
+    user_home=$(eval echo "~$actual_user")
+    
+    rm -f "$user_home/.config/autostart/kernel_upgrade_resume.desktop"
+    
+    yellow "Setze Kernel-Upgrade nach Neustart fort..."
+    purge_old_custom_kernels
+}
+
 handle_one_time_reboot() {
     yellow "$L_PURGE_REBOOT"
     
     local target_kernel
-    target_kernel=$(sudo awk -F\' '
-        /^submenu / { submen=$2 }
-        /^[[:space:]]*menuentry / {
-            title=$2
-            if(submen) print submen ">" title
-            else print title
-        }
-    ' /boot/grub/grub.cfg | grep -iE "linux" | grep -vi "waydroid" | grep -vi "recovery" | head -n 1 || true)
+    target_kernel=$(sudo grep -i "menuentry " /boot/grub/grub.cfg | grep -iv "waydroid" | grep -iv "recovery" | head -n 1 | cut -d "'" -f 2 || true)
     
     if [ -z "$target_kernel" ]; then
         red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
@@ -269,7 +269,7 @@ handle_one_time_reboot() {
     cat <<EOF | sudo -u "$current_user" tee "$autostart_dir/kernel_upgrade_resume.desktop" > /dev/null
 [Desktop Entry]
 Type=Application
-Exec=x-terminal-emulator -e bash -c "echo '--- Kernel Upgrade Auto-Resume ---'; sleep 2; sudo $script_path $args; echo 'Fertig.'; read -p 'Druecke Enter zum Schliessen...'"
+Exec=x-terminal-emulator -e bash -c "sleep 3; sudo $script_path $args; echo 'Fertig.'; read -p 'Druecke Enter zum Schliessen...'"
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
@@ -301,10 +301,7 @@ SUDO_PID=$!
 setup_autocompletion
 
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
-    local current_user="${SUDO_USER:-$(whoami)}"
-    local user_home=$(eval echo "~$current_user")
-    sudo -u "$current_user" rm -f "$user_home/.config/autostart/kernel_upgrade_resume.desktop"
-    purge_old_custom_kernels
+    handle_resume
 fi
 
 if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
@@ -348,3 +345,77 @@ if [[ "$CURRENT_RUNNING" == "${KERNEL_VERSION}-waydroid" ]] || [ -n "$IS_INSTALL
     read -p "Auswahl (1-4): " choice
     case $choice in
         1) KERNEL_VERSION="${ALTS[0]}" ;;
+        2) KERNEL_VERSION="${ALTS[1]}" ;;
+        3) KERNEL_VERSION="${ALTS[2]}" ;;
+        4) read -p "Bitte Wunschversion eingeben (z.B. 6.12.1): " KERNEL_VERSION ;;
+        *) yellow "Ungültige Auswahl. Fahre trotzdem mit $KERNEL_VERSION fort..." ;;
+    esac
+fi
+
+MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
+DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+
+DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
+DEB_COUNT=${DEB_COUNT//[[:space:]]/}
+
+if [ "$DEB_COUNT" -gt 0 ]; then
+    yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
+    read -p "$L_SKIP_PROMPT" skip
+    if [[ $skip =~ ^[yY]$ ]]; then
+        sudo dpkg -i "$CPATH"/linux-*.deb
+        if [ ! -f "$AUTOSIGN_PATH" ] && [ -f "$MOK_PRIV" ]; then
+            EXT_VER=$(ls "$CPATH"/linux-image-*.deb 2>/dev/null | head -n 1 | sed -r 's/.*image-(.*)_.*\.deb/\1/')
+            [ -n "$EXT_VER" ] && manual_sign "$EXT_VER"
+        elif [ ! -f "$AUTOSIGN_PATH" ]; then
+            manual_sign ""
+        fi
+        kill "$SUDO_PID"; exit 0
+    fi
+fi
+
+yellow "$L_INST_DEP"
+sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils jq > /dev/null || { red "$L_ERR_DEP"; kill $SUDO_PID; exit 1; }
+
+cd "$CPATH"
+find . -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
+find . -maxdepth 1 -type f \( -name 'linux-*.tar.*' -o -name 'linux-*.zip' \) -exec rm -f {} +
+
+yellow "$(printf "$L_DL_VER" "$KERNEL_VERSION")"
+wget -q --show-progress "$DL_URL"
+tar -xf "linux-${KERNEL_VERSION}.tar.xz"
+cd "linux-${KERNEL_VERSION}"
+
+cp "/boot/config-$(uname -r)" .config
+make olddefconfig
+
+wget -q -O .config-fragment "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment"
+sed -i 's/-um790pro/-waydroid/g' .config-fragment
+./scripts/kconfig/merge_config.sh .config .config-fragment
+make olddefconfig
+
+if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
+    sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
+fi
+
+time nice make bindeb-pkg -j"$CPUCORES"
+
+FULL_KVER="${KERNEL_VERSION}-waydroid"
+
+if [ -f "$AUTOSIGN_PATH" ]; then
+    manage_keys
+    sudo dpkg -i "$CPATH"/linux-*.deb
+elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+    manage_keys
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    manual_sign "$FULL_KVER"
+else
+    manage_keys
+    manage_autosign
+    sudo dpkg -i "$CPATH"/linux-*.deb
+    if [ ! -f "$AUTOSIGN_PATH" ] ; then
+        manual_sign "$FULL_KVER"
+    fi
+fi
+
+kill "$SUDO_PID" 2>/dev/null || true
+green "$L_DONE"
