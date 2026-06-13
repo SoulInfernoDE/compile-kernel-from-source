@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.5-stable"
+SCRIPT_VERSION="v3.6-stable"
 UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
 
 # --- FARBEN ---
@@ -180,6 +180,10 @@ manage_keys() {
     sudo mkdir -p "$SYS_MOK_DIR"
     sudo cp "$MOK_PRIV" "$MOK_PEM" "$MOK_DER" "$SYS_MOK_DIR/"
     sudo chmod 600 "$SYS_MOK_DIR/MOK.priv"
+
+    # FIX: Keys auch direkt nach /root/ kopieren für den offiziellen Mint Update Manager
+    sudo cp "$MOK_PRIV" "$MOK_PEM" "$MOK_DER" /root/
+    sudo chmod 600 /root/MOK.priv /root/MOK.pem /root/MOK.der 2>/dev/null || true
 }
 
 manage_autosign() {
@@ -214,22 +218,41 @@ purge_old_custom_kernels() {
     local running_k
     running_k=$(uname -r)
     
-    local custom_pkgs
-    custom_pkgs=$(dpkg -l | grep -E 'linux-(image|headers|image-unsigned)-.*-waydroid' | awk '{print $2}' || true)
-    if [ -n "$custom_pkgs" ]; then
-        for pkg in $custom_pkgs; do
+    # Dynamische Erkennung aller Kernel-Versionen, die KEINE offiziellen Endungen haben
+    local custom_versions
+    custom_versions=$(dpkg -l | awk '/^ii[[:space:]]+linux-image-[0-9]/ {print $2}' | grep -vE 'generic|amd64|oem|virtual|kvm' | sed 's/linux-image-//' || true)
+    
+    local pkgs_to_purge=""
+    for ver in $custom_versions; do
+        local associated_pkgs
+        associated_pkgs=$(dpkg -l | awk '/^ii/ {print $2}' | grep -F "$ver" || true)
+        pkgs_to_purge="$pkgs_to_purge $associated_pkgs"
+    done
+    
+    pkgs_to_purge=$(echo "$pkgs_to_purge" | xargs)
+    
+    if [ -n "$pkgs_to_purge" ]; then
+        for pkg in $pkgs_to_purge; do
             if [[ "$pkg" == *"$running_k"* ]]; then
                 yellow "Überspringe Löschen von $pkg (aktiv geladen!)"
             else
                 sudo apt-get purge -y "$pkg"
             fi
         done
+        sudo apt-get autoremove -y
+        sudo update-grub
+        green "System-Bereinigung erfolgreich abgeschlossen."
+    else
+        green "Keine zu löschenden Custom-Kernel gefunden."
     fi
-    sudo rm -rf /usr/lib/debug/lib/modules/*-waydroid
-    sudo rm -rf /usr/src/linux-headers-*-waydroid
-    sudo apt-get autoremove -y
-    sudo update-grub
-    green "System-Bereinigung erfolgreich abgeschlossen."
+    
+    # Reste in Debug- und Source-Ordnern löschen (gezielt für die gefundenen Custom-Versionen)
+    for ver in $custom_versions; do
+        if [[ "$ver" != "$running_k" ]]; then
+            sudo rm -rf "/usr/lib/debug/lib/modules/$ver" 2>/dev/null || true
+            sudo rm -rf "/usr/src/linux-headers-$ver" 2>/dev/null || true
+        fi
+    done
 }
 
 handle_resume() {
@@ -246,8 +269,16 @@ handle_resume() {
 handle_one_time_reboot() {
     yellow "$L_PURGE_REBOOT"
     
+    # Wähle explizit einen offiziellen Kernel (z.B. generic, amd64) und parse ggf. Submenüs
     local target_kernel
-    target_kernel=$(sudo grep -i "menuentry " /boot/grub/grub.cfg | grep -iv "waydroid" | grep -iv "recovery" | head -n 1 | cut -d "'" -f 2 || true)
+    target_kernel=$(sudo awk -F\' '
+        /^submenu / { submen=$2 }
+        /^[[:space:]]*menuentry / {
+            title=$2
+            if(submen) print submen ">" title
+            else print title
+        }
+    ' /boot/grub/grub.cfg | grep -iE "linux" | grep -iE "generic|amd64|oem" | grep -vi "recovery" | head -n 1 || true)
     
     if [ -z "$target_kernel" ]; then
         red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
@@ -308,7 +339,8 @@ if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; 
 if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
 if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
 
-if uname -r | grep -q "waydroid" && [ "$RESUMED_FROM_REBOOT" = false ]; then
+# CRITICAL ENVIRONMENT-CHECK: Wirft einen Reboot, wenn wir NICHT in einem offiziellen Kernel sind
+if ! uname -r | grep -qiE "generic|amd64|oem|virtual|kvm" && [ "$RESUMED_FROM_REBOOT" = false ]; then
     handle_one_time_reboot
     kill "$SUDO_PID"
     exit 0
