@@ -5,7 +5,7 @@
 #
 
 # --- VERSION ---
-SCRIPT_VERSION="v4.1-stable"
+SCRIPT_VERSION="v4.2-stable"
 REPO_RAW="${KU_REPO_RAW:-https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid}"
 UPDATE_URL="$REPO_RAW/kernel_upgrade"
 
@@ -1253,7 +1253,6 @@ EOF
     fi
     ./scripts/kconfig/merge_config.sh .config .config-fragment
     make olddefconfig
-    KREL=$(make -s kernelrelease)
 
     # Neuere Kernel legen die .config bereits selbst ins Header-Paket
     if ! grep -q '\.config' scripts/package/install-extmod-build 2>/dev/null \
@@ -1271,6 +1270,8 @@ EOF
         exit 1
     fi
     BUILD_SECONDS=$SECONDS
+    # Der endgültige Release-Name (inkl. Suffix) steht erst nach dem Build fest
+    if [ -s include/config/kernel.release ]; then KREL=$(cat include/config/kernel.release); fi
     cd "$WORK"
     find_debs "$KREL"
 fi
