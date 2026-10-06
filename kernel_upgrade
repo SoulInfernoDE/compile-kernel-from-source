@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
+#
+# kernel_upgrade - compile, install and sign a mainline Linux kernel
+# https://github.com/SoulInfernoDE/compile-kernel-from-source
+#
 
 # --- VERSION ---
-SCRIPT_VERSION="v3.6-stable"
-UPDATE_URL="https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid/upgrade_kernel"
+SCRIPT_VERSION="v4.1-stable"
+REPO_RAW="${KU_REPO_RAW:-https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid}"
+UPDATE_URL="$REPO_RAW/kernel_upgrade"
+
+set -euo pipefail
+
+ORIG_ARGS=("$@")
+SELF=$(realpath "${BASH_SOURCE[0]}")
+SELF_DIR=$(dirname "$SELF")
 
 # --- FARBEN ---
 RED='\033[1;31m'
@@ -10,128 +21,806 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BWHITE='\033[1;37m'
 NC='\033[0m'
-red() { printf "%b%s%b\n" "$RED" "$*" "$NC"; }
-green() { printf "%b%s%b\n" "$GREEN" "$*" "$NC"; }
-yellow() { printf "%b%s%b\n" "$YELLOW" "$*" "$NC"; }
-bwhite() { printf "%b%s%b\n" "$BWHITE" "$*" "$NC"; }
 
-# --- ATOMARE AUTO-UPDATE FUNKTION ---
-check_for_updates() {
-    local remote_version
-    remote_version=$(curl -sL --max-time 3 "$UPDATE_URL" | grep -m 1 '^SCRIPT_VERSION=' | cut -d'"' -f2 || true)
-    
-    if [ -n "$remote_version" ] && [ "$remote_version" != "$SCRIPT_VERSION" ]; then
-        yellow "Update gefunden: $remote_version (Aktuell: $SCRIPT_VERSION)"
-        local script_path
-        script_path=$(realpath "${BASH_SOURCE[0]}")
-        local tmp_file
-        tmp_file=$(mktemp)
-        if curl -sL --max-time 10 "$UPDATE_URL" -o "$tmp_file"; then
-            chmod +x "$tmp_file"
-            mv "$tmp_file" "$script_path"
-            green "Update erfolgreich! Skript startet neu..."
-            exec "$script_path" "$@"
-        else
-            red "Fehler beim Herunterladen. Fahre mit der aktuellen Version fort..."
-            rm -f "$tmp_file"
-        fi
+# --- SPRACH-ERKENNUNG ---
+IS_DE=false
+[[ ${LC_ALL:-${LC_MESSAGES:-${LANG:-}}} == de* ]] && IS_DE=true
+
+# L "deutsch" "english" -> gibt den passenden Text aus
+L() { if $IS_DE; then printf '%s' "$1"; else printf '%s' "${2:-$1}"; fi; }
+say()  { printf '%b%s%b\n' "$BWHITE" "$(L "$@")" "$NC"; }
+info() { printf '%b%s%b\n' "$YELLOW" "$(L "$@")" "$NC"; }
+ok()   { printf '%b%s%b\n' "$GREEN" "$(L "$@")" "$NC"; }
+err()  { printf '%b%s%b\n' "$RED" "$(L "$@")" "$NC" >&2; }
+die()  { err "$@"; exit 1; }
+
+# Maschinenlesbare Marker für die GUI (kernel_upgrade_gui)
+GUI_MODE="${KU_GUI:-0}"
+marker() { if [ "$GUI_MODE" = 1 ]; then printf '@@KU@@ %s\n' "$*"; fi; }
+TOTAL_STAGES=7
+stage() { # $1 = Nummer, $2 = de, $3 = en
+    local title
+    title=$(L "$2" "$3")
+    marker "stage $1 $TOTAL_STAGES $title"
+    printf '\n%b[%s/%s] %s%b\n' "$BWHITE" "$1" "$TOTAL_STAGES" "$title" "$NC"
+}
+
+show_help() {
+    if $IS_DE; then cat <<'EOF'
+Nutzung: kernel_upgrade [OPTIONEN]
+
+Ein vollautomatisches Skript zum Kompilieren, Installieren und Signieren.
+
+Bauen:
+  --kernelversion VER      Version erzwingen (z.B. 6.12.1) oder Kanal wählen:
+                           stable | longterm | mainline
+  --jobs N                 Anzahl paralleler Build-Jobs (Standard: alle Kerne).
+  --no-reboot              Kein Sicherheits-Neustart; baut im laufenden Custom-Kernel.
+  --purge-custom           Löscht alte Custom-Kernel samt Resten.
+  --with-dbg               Installiert zusätzlich das (große) Debug-Paket.
+  --keep-source            Quellbaum nach erfolgreichem Build behalten.
+  -y, --yes                Alle Rückfragen mit dem Standard beantworten.
+  --no-autosign            Autosign-Hook nicht (nach)installieren.
+  --dry-run                Zeigt nur, was passieren würde (keine Änderungen).
+
+Verwalten:
+  --list                   Installierte Kernel und verfügbare Versionen anzeigen.
+  --remove VER             Einen einzelnen Custom-Kernel entfernen.
+  --cleanup                Nur bereinigen (alte Custom-Kernel, Reste), kein Build.
+  --signonly [VER]         Nur einen Kernel in /boot signieren.
+  --installautosign        Installiert/aktualisiert den Autosign-Hook.
+  --uninstallautosign      Entfernt den Autosign-Hook.
+  --install-system         Installiert Skript, GUI und Icon nach ~/.scripts.
+  --update                 Nur nach einer neuen Skript-Version suchen.
+  --no-update              Update-Prüfung für diesen Lauf überspringen.
+  --status-json            Systemstatus als JSON (für die GUI).
+  --version                Zeigt die Skript-Version an.
+  -h, --help               Zeigt diese Hilfe an.
+EOF
+    else cat <<'EOF'
+Usage: kernel_upgrade [OPTIONS]
+
+A fully automated script to compile, install, and sign.
+
+Build:
+  --kernelversion VER      Force a version (e.g. 6.12.1) or pick a channel:
+                           stable | longterm | mainline
+  --jobs N                 Number of parallel build jobs (default: all cores).
+  --no-reboot              No safety reboot; build from the running custom kernel.
+  --purge-custom           Deletes old custom kernels including leftovers.
+  --with-dbg               Also install the (large) debug package.
+  --keep-source            Keep the source tree after a successful build.
+  -y, --yes                Answer all prompts with their default.
+  --no-autosign            Do not (re)install the autosign hook.
+  --dry-run                Only show what would happen (no changes).
+
+Manage:
+  --list                   Show installed kernels and available versions.
+  --remove VER             Remove a single custom kernel.
+  --cleanup                Only clean up (old custom kernels, leftovers), no build.
+  --signonly [VER]         Only sign a kernel in /boot.
+  --installautosign        Install/update the autosign hook.
+  --uninstallautosign      Remove the autosign hook.
+  --install-system         Install script, GUI and icon to ~/.scripts.
+  --update                 Only check for a new script version.
+  --no-update              Skip the update check for this run.
+  --status-json            System status as JSON (used by the GUI).
+  --version                Show script version.
+  -h, --help               Show this help.
+EOF
     fi
 }
 
-check_for_updates "$@"
-
-# --- SPRACH-ERKENNUNG ---
-if [[ ${LANG:-} == de* ]]; then
-    L_HELP="Nutzung: kernel_upgrade [OPTIONEN]\n\nEin vollautomatisches Skript zum Kompilieren, Installieren und Signieren.\n\nOptionen:\n  -h, --help               Zeigt diese Hilfe an.\n  --version                Zeigt die Skript-Version an.\n  --kernelversion [VER]    Erzwingt eine spezifische Kernel-Version.\n  --signonly               Nur händische Signierung eines Kernels in /boot.\n  --installautosign        Installiert das Autosignierungs-Skript.\n  --uninstallautosign      Entfernt das Autosignierungs-Skript.\n  --purge-custom           Löscht alte Custom-Kernel (erzwingt safe reboot).\n  --install-system         Installiert das Skript systemweit in ~/.scripts.\n"
-    L_ERR_DEP="Fehler: Fehlende oder falsche Abhängigkeiten selektiert."
-    L_MOK_CHECK="Prüfe MOK Schlüssel..."
-    L_MOK_GEN="Keine Keys gefunden. Neue UEFI-Keys generieren? (y/n): "
-    L_MOK_REBOOT="Keys generiert. NACH REBOOT im MOK-Manager 'Enroll MOK' wählen!"
-    L_AUTO_INST="Soll das Autosign-Script (neu) installiert werden? (y/n): "
-    L_AUTO_DONE="Autosign-Script unter %s konfiguriert.\n"
-    L_DEB_FOUND="%s Kernel-Pakete gefunden. Build überspringen?\n"
-    L_SKIP_PROMPT="(y)es = nur Signieren & Installieren / (n)o = Neu bauen: "
-    L_INST_DEP="Installiere Abhängigkeiten..."
-    L_DL_VER="Nutze Version: %s\n"
-    L_DONE="Kernel Upgrade erfolgreich abgeschlossen!"
-    L_KEXIST="Kernel %s ist bereits gebaut/installiert!\n"
-    L_KALT_PROMPT="Wähle eine alternative stabilere Version oder tippe eine ein:\n"
-    L_PURGE_REBOOT="Sicherheits-Boot: Es läuft ein Custom-Kernel oder eine Bereinigung wurde angefordert.\nDas System startet in den offiziellen Distributions-Kernel, um Fehler zu vermeiden.\nDas Skript setzt sich nach dem Reboot und deinem Login vollautomatisch fort.\n"
-    L_REBOOT_COUNT="\r\033[1;33mNeustart in %s Sekunden... (STRG+C zum Abbrechen)\033[0m  "
-else
-    L_HELP="Usage: kernel_upgrade [OPTIONS]\n\nA fully automated script to compile, install, and sign.\n\nOptions:\n  -h, --help               Show this help.\n  --version                Show script version.\n  --kernelversion [VER]    Force a specific kernel version.\n  --signonly               Manually sign a kernel in /boot only.\n  --installautosign        Install the autosigning script.\n  --uninstallautosign      Remove the autosigning script.\n  --purge-custom           Deletes old custom kernels (enforces safe reboot).\n  --install-system         Installs the script globally in ~/.scripts.\n"
-    L_ERR_DEP="Error: missing or wrong dependency selection."
-    L_MOK_CHECK="Checking MOK keys..."
-    L_MOK_GEN="No keys found. Generate new UEFI keys? (y/n): "
-    L_MOK_REBOOT="Keys generated. AFTER REBOOT select 'Enroll MOK' in MOK manager!"
-    L_AUTO_INST="Should the autosign script be (re)installed? (y/n): "
-    L_AUTO_DONE="Autosign script configured at %s.\n"
-    L_DEB_FOUND="%s kernel packages found. Skip build?\n"
-    L_SKIP_PROMPT="(y)es = sign & install only / (n)o = build new: "
-    L_INST_DEP="Installing dependencies..."
-    L_DL_VER="Using version: %s\n"
-    L_DONE="Kernel upgrade completed successfully!"
-    L_KEXIST="Kernel %s is already built/installed!\n"
-    L_KALT_PROMPT="Select an alternative stable version or type one manually:\n"
-    L_PURGE_REBOOT="Safety Boot: A custom kernel is active or a purge was requested.\nThe system will REBOOT into the official stock kernel now to prevent build environment pollution.\nThe script will resume automatically after you log in.\n"
-    L_REBOOT_COUNT="\r\033[1;33mRebooting in %s seconds... (Press CTRL+C to abort)\033[0m  "
-fi
-
-show_help() { echo -e "$L_HELP"; }
-
 # --- PARAMETER-STEUERUNG ---
-SIGN_ONLY=false
-INSTALL_AUTOSIGN=false
-UNINSTALL_AUTOSIGN=false
+MODE="build"
 PURGE_CUSTOM=false
-INSTALL_SYSTEM=false
-MANUAL_KERNEL_VERSION=""
 RESUMED_FROM_REBOOT=false
+NO_REBOOT=false
+NO_UPDATE=false
+ASSUME_YES=false
+DRY_RUN=false
+WITH_DBG=false
+KEEP_SOURCE=false
+WANT_AUTOSIGN=true
+MANUAL_KERNEL_VERSION=""
+SIGN_VERSION=""
+REMOVE_VERSION=""
+CPUCORES=$(nproc)
+
+need_arg() { [[ -n "${2:-}" && $2 != --* ]] || die "Fehler: $1 benötigt ein Argument." "Error: $1 needs an argument."; }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -h|--help) show_help; exit 0 ;;
     --version) echo "kernel_upgrade version $SCRIPT_VERSION"; exit 0 ;;
-    --signonly) SIGN_ONLY=true; shift ;;
-    --installautosign) INSTALL_AUTOSIGN=true; shift ;;
-    --uninstallautosign) UNINSTALL_AUTOSIGN=true; shift ;;
+    --signonly)
+      MODE="sign"
+      if [[ -n "${2:-}" && $2 != -* ]]; then SIGN_VERSION="$2"; shift; fi
+      shift ;;
+    --installautosign) MODE="installautosign"; shift ;;
+    --uninstallautosign) MODE="uninstallautosign"; shift ;;
+    --install-system) MODE="installsystem"; shift ;;
+    --status-json) MODE="status"; shift ;;
+    --list) MODE="list"; shift ;;
+    --cleanup) MODE="cleanup"; shift ;;
+    --update) MODE="update"; shift ;;
+    --autostart-resume) MODE="autostart"; shift ;;
+    --remove) need_arg "$1" "${2:-}"; MODE="remove"; REMOVE_VERSION="$2"; shift 2 ;;
     --purge-custom) PURGE_CUSTOM=true; shift ;;
-    --install-system) INSTALL_SYSTEM=true; shift ;;
     --resumed) RESUMED_FROM_REBOOT=true; shift ;;
-    --kernelversion)
-      if [[ -n "${2:-}" && ! $2 == --* ]]; then MANUAL_KERNEL_VERSION="$2"; shift 2
-      else echo "Error: --kernelversion needs an argument"; exit 1; fi ;;
-    *) shift ;;
+    --no-reboot) NO_REBOOT=true; shift ;;
+    --no-update) NO_UPDATE=true; shift ;;
+    -y|--yes) ASSUME_YES=true; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --with-dbg) WITH_DBG=true; shift ;;
+    --keep-source) KEEP_SOURCE=true; shift ;;
+    --no-autosign) WANT_AUTOSIGN=false; shift ;;
+    --kernelversion) need_arg "$1" "${2:-}"; MANUAL_KERNEL_VERSION="$2"; shift 2 ;;
+    --jobs)
+      need_arg "$1" "${2:-}"
+      [[ $2 =~ ^[1-9][0-9]*$ ]] || die "Fehler: --jobs erwartet eine Zahl." "Error: --jobs expects a number."
+      CPUCORES="$2"; shift 2 ;;
+    *) err "Unbekannte Option: $1" "Unknown option: $1"; echo; show_help; exit 2 ;;
   esac
 done
 
-set -euo pipefail
+# Das Skript holt sich Root-Rechte selbst per sudo. Wird es komplett als root
+# gestartet, zeigen $HOME, Schlüssel und Build-Verzeichnis auf /root.
+if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    exec sudo -u "$SUDO_USER" -H -- "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+fi
 
 # --- KONFIGURATION ---
-CPUCORES=$(nproc)
 CPATH="$HOME/Downloads"
+WORK="${KU_BUILD_DIR:-$CPATH/kernel_upgrade}"
+WORK_MARKER=".kernel_upgrade_workdir"
+LOCALVER="${KU_LOCALVERSION:--waydroid}"
 USER_MOK_DIR="$HOME/.mok_keys"
 SYS_MOK_DIR="/var/lib/shim-signed/mok"
 MOK_PRIV="$USER_MOK_DIR/MOK.priv"
 MOK_PEM="$USER_MOK_DIR/MOK.pem"
 MOK_DER="$USER_MOK_DIR/MOK.der"
 AUTOSIGN_PATH="/etc/kernel/postinst.d/sign_kernel_images"
+AUTOSIGN_MARKER="kernel_upgrade-autosign v2"
 COMPLETION_PATH="/etc/bash_completion.d/kernel_upgrade"
 BUILDDEB_FILE="scripts/package/builddeb"
 MARKER="# Include .config in headers package"
+GRUB_CFG="${KU_GRUB_CFG:-/boot/grub/grub.cfg}"
+GRUB_ENV="/boot/grub/grubenv"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kernel_upgrade"
+RESUME_ARGS_FILE="$STATE_DIR/resume.args"
+RESUME_UI_FILE="$STATE_DIR/resume.ui"
+AUTOSTART_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/kernel_upgrade_resume.desktop"
+USER_FRAGMENT="${XDG_CONFIG_HOME:-$HOME/.config}/kernel_upgrade/config-fragment"
+GUI_NAME="kernel_upgrade_gui"
+ICON_NAME="kernel_upgrade"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/kernel_upgrade.desktop"
+MOK_PENDING=false
+NET_WAIT="${KU_NET_WAIT:-60}"
 
-# --- FUNKTIONEN ---
+# ==============================================================================
+# HILFSFUNKTIONEN
+# ==============================================================================
+
+# run CMD... -> führt aus, im --dry-run wird nur angezeigt
+run() {
+    if [ "$DRY_RUN" = true ]; then
+        printf '%b[dry-run]%b %s\n' "$YELLOW" "$NC" "$*"
+    else
+        "$@"
+    fi
+}
+
+# ask_yn "Frage" y|n -> Rückgabe 0 bei Ja. Standard gilt bei --yes und ohne Terminal.
+ask_yn() {
+    local def="$2" ans=""
+    if [ "$ASSUME_YES" = true ] || [ ! -t 0 ]; then
+        ans="$def"
+    else
+        read -r -p "$1 ($([ "$def" = y ] && echo "Y/n" || echo "y/N")): " ans || ans=""
+        ans="${ans:-$def}"
+    fi
+    [[ $ans =~ ^[yYjJ] ]]
+}
+
+SUDO_PID=""
+start_sudo() {
+    if [ -n "$SUDO_PID" ] || [ "$DRY_RUN" = true ]; then return 0; fi
+    sudo -v
+    ( while sleep 50; do sudo -n -v 2>/dev/null || exit 0; done ) </dev/null >/dev/null 2>&1 &
+    SUDO_PID=$!
+}
+cleanup_on_exit() {
+    if [ -n "$SUDO_PID" ]; then kill "$SUDO_PID" 2>/dev/null || true; fi
+}
+trap cleanup_on_exit EXIT
+
+# Versionsvergleich: "v3.6-stable" -> "3.6"
+ver_num() { local v="${1#v}"; printf '%s' "${v%%-*}"; }
+ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }
+
+valid_release() { [[ $1 =~ ^[0-9]+\.[0-9]+[A-Za-z0-9.+~_-]*$ ]]; }
+
+# --- ATOMARE AUTO-UPDATE FUNKTION ---
+update_companion() { # $1 = Pfad im Repo, $2 = Zieldatei (nur wenn bereits installiert)
+    local tmp
+    [ -f "$2" ] && [ -w "$2" ] || return 0
+    tmp=$(mktemp "$(dirname "$2")/.ku_update.XXXXXX") || return 0
+    if curl -fsSL --max-time 10 "$REPO_RAW/$1" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        chmod --reference="$2" "$tmp" 2>/dev/null || true
+        mv -f "$tmp" "$2"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+check_for_updates() { # $1 = "verbose" für --update
+    local verbose="${1:-}" tmp remote
+    if [ -n "${KU_UPDATED:-}" ]; then return 0; fi
+    if ! command -v curl >/dev/null 2>&1; then
+        [ -z "$verbose" ] || err "curl fehlt - Update-Prüfung nicht möglich." "curl is missing - cannot check for updates."
+        return 0
+    fi
+    if [ -e "$SELF_DIR/.git" ]; then
+        [ -z "$verbose" ] || info "Git-Checkout erkannt - Updates bitte per 'git pull'." "Git checkout detected - please update via 'git pull'."
+        return 0
+    fi
+    if [ ! -w "$SELF" ] || [ ! -w "$SELF_DIR" ]; then
+        [ -z "$verbose" ] || err "Keine Schreibrechte auf $SELF." "No write permission for $SELF."
+        return 0
+    fi
+
+    # Temp-Datei im selben Verzeichnis, damit das mv wirklich atomar ist
+    tmp=$(mktemp "$SELF_DIR/.kernel_upgrade.XXXXXX") || return 0
+    if ! curl -fsSL --max-time 5 "$UPDATE_URL" -o "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        [ -z "$verbose" ] || err "Update-Server nicht erreichbar: $UPDATE_URL" "Update server unreachable: $UPDATE_URL"
+        return 0
+    fi
+
+    remote=$(grep -m 1 '^SCRIPT_VERSION=' "$tmp" | cut -d'"' -f2 || true)
+    if [ -z "$remote" ] || ! ver_gt "$(ver_num "$remote")" "$(ver_num "$SCRIPT_VERSION")"; then
+        rm -f "$tmp"
+        [ -z "$verbose" ] || ok "Skript ist aktuell ($SCRIPT_VERSION)." "Script is up to date ($SCRIPT_VERSION)."
+        return 0
+    fi
+
+    info "Update gefunden: $remote (Aktuell: $SCRIPT_VERSION)" "Update found: $remote (current: $SCRIPT_VERSION)"
+    if ! head -n 1 "$tmp" | grep -q '^#!.*bash' || ! bash -n "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        err "Heruntergeladene Datei ist ungültig. Fahre mit der aktuellen Version fort..." "Downloaded file is invalid. Continuing with the current version..."
+        return 0
+    fi
+
+    chmod --reference="$SELF" "$tmp" 2>/dev/null || chmod 755 "$tmp"
+    mv -f "$tmp" "$SELF"
+    update_companion "$GUI_NAME" "$SELF_DIR/$GUI_NAME"
+    update_companion "assets/$ICON_NAME.svg" "$ICON_DIR/$ICON_NAME.svg"
+    ok "Update erfolgreich! Skript startet neu..." "Update successful! Restarting script..."
+    KU_UPDATED=1 exec "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+}
+
+case "$MODE" in
+    status|autostart) ;;
+    update) check_for_updates verbose; exit 0 ;;
+    *)
+        if [ "$NO_UPDATE" = false ] && [ "${KU_NO_UPDATE:-0}" != 1 ] && [ "$RESUMED_FROM_REBOOT" = false ]; then
+            check_for_updates
+        fi ;;
+esac
+
+# ==============================================================================
+# KERNEL-ERKENNUNG
+# ==============================================================================
+
+# Selbst gebaute Kernel (make bindeb-pkg) tragen das Quellpaket "linux-upstream".
+# Das ist zuverlässiger als auf Namensendungen wie -generic oder -amd64 zu raten.
+is_custom_kernel() { # $1 = Kernel-Release
+    local pkg src
+    pkg=$(dpkg-query -S "/boot/vmlinuz-$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true)
+    [ -n "$pkg" ] || return 0
+    src=$(dpkg-query -W -f '${source:Package}' "$pkg" 2>/dev/null || true)
+    [ "$src" = "linux-upstream" ]
+}
+
+installed_kernels() { # neueste zuerst
+    local f
+    for f in /boot/vmlinuz-*; do
+        [ -e "$f" ] || continue
+        printf '%s\n' "${f#/boot/vmlinuz-}"
+    done | sort -rV
+}
+
+newest_stock_kernel() {
+    local v
+    while IFS= read -r v; do
+        if ! is_custom_kernel "$v"; then printf '%s\n' "$v"; return 0; fi
+    done < <(installed_kernels)
+    return 0
+}
+
+custom_packages() { # alle (auch halb entfernten) Pakete aus eigenen Builds
+    dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${source:Package}\n' 'linux-*' 2>/dev/null \
+        | awk -F'\t' '$3 == "linux-upstream" && $1 !~ /^un/ { print $2 }' || true
+}
+
+path_owned() { dpkg-query -S "$1" >/dev/null 2>&1 || dpkg-query -S "/usr$1" >/dev/null 2>&1; }
+
+# "7.2" -> "7.2.0-waydroid", "7.3-rc6" -> "7.3.0-rc6-waydroid"
+expected_release() {
+    local v="$1" base rc=""
+    base="${v%%-*}"
+    [ "$base" = "$v" ] || rc="-${v#*-}"
+    [[ $base =~ ^[0-9]+\.[0-9]+$ ]] && base="$base.0"
+    printf '%s%s%s' "$base" "$rc" "$LOCALVER"
+}
+
+# Sucht den GRUB-Eintrag über die stabile menuentry-ID statt über den Titel.
+find_grub_entry() { # $1 = Kernel-Release -> "submenu-id>eintrag-id"
+    local reader=(cat)
+    if [ ! -r "$GRUB_CFG" ]; then
+        if [ "$DRY_RUN" = true ]; then return 0; fi
+        reader=(sudo cat)
+    fi
+    "${reader[@]}" "$GRUB_CFG" | awk -v ver="$1" '
+        function entry_id(line,   s) {
+            if (match(line, /menuentry_id_option \047[^\047]+\047/)) {
+                s = substr(line, RSTART, RLENGTH)
+                sub(/^[^\047]*\047/, "", s); sub(/\047$/, "", s)
+                return s
+            }
+            return ""
+        }
+        /^submenu /  { sub_id = entry_id($0); next }
+        /^}/         { sub_id = ""; next }
+        /^[ \t]*menuentry / {
+            id = entry_id($0)
+            if (!found && index(id, "gnulinux-" ver "-advanced-") == 1) {
+                found = (sub_id != "" ? sub_id ">" : "") id
+            }
+        }
+        END { if (found) print found }'
+}
+
+# ==============================================================================
+# BEREINIGUNG
+# ==============================================================================
+
+PURGE_PKGS=()
+PURGE_VERS=()
+SKIPPED_RUNNING=false
+
+collect_purge_targets() { # $1 = optional: nur dieses Release
+    local only="${1:-}" running p v d
+    local -A seen=()
+    running=$(uname -r)
+    PURGE_PKGS=(); PURGE_VERS=(); SKIPPED_RUNNING=false
+
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        case "$p" in
+            linux-image-*) v="${p#linux-image-}"; v="${v%-dbg}" ;;
+            linux-headers-*) v="${p#linux-headers-}" ;;
+            *) continue ;;   # linux-libc-dev -> restore_libc_dev
+        esac
+        if [ -n "$only" ] && [ "$v" != "$only" ]; then continue; fi
+        if [ "$v" = "$running" ]; then SKIPPED_RUNNING=true; continue; fi
+        PURGE_PKGS+=("$p")
+        if [ -z "${seen[$v]:-}" ]; then seen[$v]=1; PURGE_VERS+=("$v"); fi
+    done < <(custom_packages)
+
+    # Verwaiste Verzeichnisse: kein Kernel-Image mehr und keinem Paket zugeordnet
+    for d in /lib/modules/* /usr/lib/debug/lib/modules/* /usr/src/linux-headers-*; do
+        [ -d "$d" ] || continue
+        v="${d##*/}"; v="${v#linux-headers-}"
+        valid_release "$v" || continue
+        if [ -n "$only" ] && [ "$v" != "$only" ]; then continue; fi
+        if [ "$v" = "$running" ] || [ -e "/boot/vmlinuz-$v" ] || [ -n "${seen[$v]:-}" ]; then continue; fi
+        path_owned "$d" && continue
+        seen[$v]=1; PURGE_VERS+=("$v")
+    done
+}
+
+# bindeb-pkg baut auch linux-libc-dev. Frühere Skript-Versionen haben damit das
+# Distributions-Paket überschrieben - hier wird es wiederhergestellt.
+restore_libc_dev() {
+    local src cand
+    src=$(dpkg-query -W -f '${source:Package}' linux-libc-dev 2>/dev/null || true)
+    [ "$src" = "linux-upstream" ] || return 0
+    cand=$(apt-cache madison linux-libc-dev 2>/dev/null | awk -F'|' '{ gsub(/ /, "", $2); print $2 }' | sort -V | tail -n 1 || true)
+    if [ -z "$cand" ]; then
+        err "linux-libc-dev stammt aus einem Custom-Build, aber im Repository wurde keine Version gefunden." "linux-libc-dev comes from a custom build, but no repository version was found."
+        return 0
+    fi
+    info "Stelle das linux-libc-dev der Distribution wieder her ($cand)..." "Restoring the distribution's linux-libc-dev ($cand)..."
+    run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "linux-libc-dev=$cand" \
+        || err "linux-libc-dev konnte nicht wiederhergestellt werden." "Could not restore linux-libc-dev."
+}
+
+# Reste früherer Skript-Versionen, die direkt in ~/Downloads gebaut haben
+clean_legacy_artifacts() {
+    local f found=false
+    shopt -s nullglob
+    for f in "$CPATH"/linux-[0-9]*; do
+        if [ -d "$f" ] && [ -f "$f/Kconfig" ] && [ -f "$f/$BUILDDEB_FILE" ]; then
+            found=true; run rm -rf -- "$f"
+        elif [ -f "$f" ] && [[ $f == *.tar.xz || $f == *.tar.gz ]]; then
+            found=true; run rm -f -- "$f"
+        fi
+    done
+    for f in "$CPATH"/linux-upstream_*.buildinfo "$CPATH"/linux-upstream_*.changes \
+             "$CPATH"/linux-image-*"$LOCALVER"*.deb "$CPATH"/linux-headers-*"$LOCALVER"*.deb \
+             "$CPATH"/linux-libc-dev_*.deb; do
+        found=true; run rm -f -- "$f"
+    done
+    shopt -u nullglob
+    if [ "$found" = true ] && [ "$DRY_RUN" = false ]; then
+        ok "Alte Build-Reste in $CPATH entfernt." "Removed old build leftovers in $CPATH."
+    fi
+}
+
+purge_collected() {
+    local v p
+    if [ "${#PURGE_PKGS[@]}" -eq 0 ] && [ "${#PURGE_VERS[@]}" -eq 0 ]; then
+        ok "Keine zu löschenden Custom-Kernel gefunden." "No custom kernels to delete."
+        return 0
+    fi
+    say "Wird entfernt: ${PURGE_VERS[*]}" "Removing: ${PURGE_VERS[*]}"
+    if [ "${#PURGE_PKGS[@]}" -gt 0 ]; then
+        run sudo env DEBIAN_FRONTEND=noninteractive apt-get purge -y "${PURGE_PKGS[@]}"
+    fi
+    for v in "${PURGE_VERS[@]}"; do
+        valid_release "$v" || continue
+        for p in "/lib/modules/$v" "/usr/lib/debug/lib/modules/$v" "/usr/src/linux-headers-$v" \
+                 "/var/lib/initramfs-tools/$v" "/boot/vmlinuz-$v" "/boot/initrd.img-$v" \
+                 "/boot/System.map-$v" "/boot/config-$v"; do
+            if [ -e "$p" ] || [ "$DRY_RUN" = true ]; then run sudo rm -rf -- "$p"; fi
+        done
+    done
+    run sudo update-grub
+}
+
+purge_old_custom_kernels() {
+    info "Bereinige alte Custom-Kernel-Reste aus dem System..." "Cleaning up old custom kernel leftovers..."
+    collect_purge_targets
+    if [ "$SKIPPED_RUNNING" = true ]; then
+        info "Überspringe den aktiv geladenen Kernel $(uname -r)." "Skipping the running kernel $(uname -r)."
+    fi
+    purge_collected
+    restore_libc_dev
+    clean_legacy_artifacts
+    ok "System-Bereinigung abgeschlossen." "System cleanup finished."
+}
+
+remove_single_kernel() {
+    local v="$REMOVE_VERSION"
+    valid_release "$v" || die "Ungültige Version: $v" "Invalid version: $v"
+    [ "$v" != "$(uname -r)" ] || die "Der laufende Kernel kann nicht entfernt werden." "The running kernel cannot be removed."
+    if [ -e "/boot/vmlinuz-$v" ] && ! is_custom_kernel "$v"; then
+        die "$v ist ein Distributions-Kernel und wird nicht angefasst." "$v is a distribution kernel and will not be touched."
+    fi
+    start_sudo
+    collect_purge_targets "$v"
+    purge_collected
+}
+
+# ==============================================================================
+# SICHERHEITS-NEUSTART
+# ==============================================================================
+
+pending_resume() { [ -f "$AUTOSTART_FILE" ] || [ -f "$RESUME_ARGS_FILE" ]; }
+
+grub_next_entry_set() {
+    command -v grub-editenv >/dev/null 2>&1 || return 1
+    grub-editenv "$GRUB_ENV" list 2>/dev/null | grep -q '^next_entry=.'
+}
+
+cancel_pending_resume() {
+    run rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+    if grub_next_entry_set; then
+        run sudo grub-editenv "$GRUB_ENV" unset next_entry || true
+    fi
+}
+
+launch_in_terminal() { # $@ = Kommando
+    local hold
+    hold=$(L "Drücke Enter zum Schließen..." "Press Enter to close...")
+    local wrap=(bash -c '"$@"; echo; read -r -p "$0" _' "$hold" "$@")
+    if command -v x-terminal-emulator >/dev/null 2>&1; then exec x-terminal-emulator -e "${wrap[@]}"
+    elif command -v gnome-terminal >/dev/null 2>&1; then exec gnome-terminal -- "${wrap[@]}"
+    elif command -v konsole >/dev/null 2>&1; then exec konsole -e "${wrap[@]}"
+    elif command -v xterm >/dev/null 2>&1; then exec xterm -e "${wrap[@]}"
+    fi
+    command -v notify-send >/dev/null 2>&1 && notify-send "Kernel Upgrade" \
+        "$(L "Kein Terminal gefunden. Bitte manuell fortsetzen: kernel_upgrade --purge-custom" "No terminal found. Please continue manually: kernel_upgrade --purge-custom")"
+    exit 1
+}
+
+# Wird nach dem Neustart vom Autostart-Eintrag aufgerufen. Der Eintrag löscht
+# sich als Erstes selbst, damit er garantiert nur ein einziges Mal läuft.
+autostart_resume() {
+    local args=() ui="terminal"
+    if [ -f "$RESUME_ARGS_FILE" ]; then mapfile -t args < "$RESUME_ARGS_FILE"; fi
+    if [ -f "$RESUME_UI_FILE" ]; then ui=$(cat "$RESUME_UI_FILE"); fi
+    rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+    [ "${#args[@]}" -gt 0 ] || exit 0
+    sleep 3
+    if [ "$ui" = "gui" ] && [ -x "$SELF_DIR/$GUI_NAME" ]; then
+        exec "$SELF_DIR/$GUI_NAME" --resume -- "${args[@]}"
+    fi
+    launch_in_terminal "$SELF" "${args[@]}"
+}
+
+handle_resume() {
+    info "Setze Kernel-Upgrade nach Neustart fort..." "Resuming kernel upgrade after reboot..."
+    run rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+    if is_custom_kernel "$(uname -r)"; then
+        err "Achtung: Das System läuft weiterhin im Custom-Kernel $(uname -r). Dieser wird nicht entfernt." \
+            "Warning: the system is still running the custom kernel $(uname -r). It will not be removed."
+    fi
+    purge_old_custom_kernels
+}
+
+handle_one_time_reboot() {
+    local target entry i args=() desktop_exec
+    info "Sicherheits-Boot: Es läuft ein Custom-Kernel." "Safety boot: a custom kernel is running."
+    info "Das System startet einmalig in den offiziellen Distributions-Kernel, bereinigt alte Custom-Kernel und setzt den Build nach dem Login automatisch fort." \
+         "The system reboots once into the official distribution kernel, removes old custom kernels and resumes the build automatically after login."
+    info "(Mit --no-reboot lässt sich der Neustart überspringen.)" "(Use --no-reboot to skip the reboot.)"
+
+    target=$(newest_stock_kernel)
+    [ -n "$target" ] || die "Fehler: Kein offizieller Distributions-Kernel in /boot gefunden!" "Error: no official distribution kernel found in /boot!"
+    entry=$(find_grub_entry "$target")
+    if [ -z "$entry" ] && [ "$DRY_RUN" = false ]; then
+        die "Fehler: Kein GRUB-Eintrag für $target in $GRUB_CFG gefunden!" "Error: no GRUB entry for $target found in $GRUB_CFG!"
+    fi
+    say "Gewählter Kernel für Reboot: $target" "Selected kernel for reboot: $target"
+    say "GRUB-Eintrag: ${entry:-?}" "GRUB entry: ${entry:-?}"
+
+    args=(--resumed --purge-custom)
+    [ -z "$MANUAL_KERNEL_VERSION" ] || args+=(--kernelversion "$MANUAL_KERNEL_VERSION")
+    [ "$ASSUME_YES" = false ] || args+=(--yes)
+    [ "$WITH_DBG" = false ] || args+=(--with-dbg)
+    [ "$KEEP_SOURCE" = false ] || args+=(--keep-source)
+    [ "$WANT_AUTOSIGN" = true ] || args+=(--no-autosign)
+    [ "$CPUCORES" = "$(nproc)" ] || args+=(--jobs "$CPUCORES")
+
+    if [ "$DRY_RUN" = true ]; then
+        run grub-reboot "$entry"
+        run systemctl reboot
+        say "Nach dem Neustart: kernel_upgrade ${args[*]}" "After reboot: kernel_upgrade ${args[*]}"
+        return 0
+    fi
+
+    mkdir -p "$STATE_DIR" "$(dirname "$AUTOSTART_FILE")"
+    printf '%s\n' "${args[@]}" > "$RESUME_ARGS_FILE"
+    if [ "$GUI_MODE" = 1 ]; then echo gui > "$RESUME_UI_FILE"; else echo terminal > "$RESUME_UI_FILE"; fi
+    desktop_exec="${SELF//\\/\\\\}"; desktop_exec="${desktop_exec//\"/\\\"}"
+    cat > "$AUTOSTART_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Kernel Upgrade Resume
+Exec="$desktop_exec" --autostart-resume
+Icon=$ICON_NAME
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+
+    # Ab hier ist der Neustart "scharf" - bei Abbruch alles wieder zurücknehmen
+    trap 'echo; cancel_pending_resume; err "Neustart abgebrochen - alles zurückgesetzt." "Reboot cancelled - everything reverted."; exit 130' INT TERM
+    sudo grub-reboot "$entry"
+
+    marker "reboot 10"
+    echo ""
+    for i in {10..1}; do
+        printf '\r%b%s%b  ' "$YELLOW" "$(L "Neustart in $i Sekunden... (STRG+C zum Abbrechen)" "Rebooting in $i seconds... (press CTRL+C to abort)")" "$NC"
+        sleep 1
+    done
+    trap - INT TERM
+    echo ""
+    ok "Neustart wird jetzt durchgeführt..." "Rebooting now..."
+    sudo systemctl reboot
+}
+
+# ==============================================================================
+# SECURE BOOT / SIGNIERUNG
+# ==============================================================================
+
+is_efi() { [ -d /sys/firmware/efi ]; }
+
+sys_keys_present() { sudo test -f "$SYS_MOK_DIR/MOK.priv" && sudo test -f "$SYS_MOK_DIR/MOK.pem"; }
+
+write_mokconfig() {
+    cat > "$1" <<'EOF'
+HOME                    = .
+[ req ]
+distinguished_name      = req_distinguished_name
+x509_extensions         = v3
+string_mask             = utf8only
+prompt                  = no
+
+[ req_distinguished_name ]
+countryName             = EN
+stateOrProvinceName     = NA
+localityName            = emptyland
+0.organizationName      = empty
+commonName              = Secure Boot Signing Key
+emailAddress            = empty@nothing.nomail
+
+[ v3 ]
+subjectKeyIdentifier    = hash
+authorityKeyIdentifier  = keyid:always,issuer
+basicConstraints        = critical,CA:FALSE
+extendedKeyUsage        = codeSigning,1.3.6.1.4.1.311.10.3.6
+nsComment               = "OpenSSL Generated Certificate"
+EOF
+}
+
+manage_keys() {
+    local state
+    mkdir -p "$USER_MOK_DIR"
+    chmod 700 "$USER_MOK_DIR"
+    info "Prüfe MOK Schlüssel..." "Checking MOK keys..."
+
+    if [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+        [ -f "$MOK_DER" ] || openssl x509 -in "$MOK_PEM" -outform DER -out "$MOK_DER"
+    elif sys_keys_present; then
+        : # Systemschlüssel sind vorhanden - keine neuen erzeugen
+    else
+        ask_yn "$(L "Keine Keys gefunden. Neue UEFI-Keys generieren?" "No keys found. Generate new UEFI keys?")" y \
+            || die "Abgebrochen." "Aborted."
+        write_mokconfig "$USER_MOK_DIR/mokconfig.cnf"
+        (umask 077; openssl req -config "$USER_MOK_DIR/mokconfig.cnf" -new -x509 -newkey rsa:2048 -nodes -days 36500 \
+            -outform DER -keyout "$MOK_PRIV" -out "$MOK_DER")
+        openssl x509 -in "$MOK_DER" -inform DER -outform PEM -out "$MOK_PEM"
+    fi
+
+    if [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+        chmod 600 "$MOK_PRIV"
+        sudo install -d -m 755 "$SYS_MOK_DIR"
+        sudo install -m 600 "$MOK_PRIV" "$SYS_MOK_DIR/MOK.priv"
+        sudo install -m 644 "$MOK_PEM" "$SYS_MOK_DIR/MOK.pem"
+        sudo install -m 644 "$MOK_DER" "$SYS_MOK_DIR/MOK.der"
+    elif ! sudo test -f "$SYS_MOK_DIR/MOK.der"; then
+        sudo openssl x509 -in "$SYS_MOK_DIR/MOK.pem" -outform DER -out "$SYS_MOK_DIR/MOK.der"
+    fi
+
+    # Ist der Schlüssel im Firmware-Schlüsselbund registriert?
+    if is_efi && command -v mokutil >/dev/null 2>&1; then
+        state=$(mokutil --test-key "$SYS_MOK_DIR/MOK.der" 2>&1 || true)
+        if grep -qi 'already enrolled' <<<"$state"; then
+            ok "MOK-Schlüssel ist registriert." "MOK key is enrolled."
+        elif grep -qi 'enrollment request' <<<"$state"; then
+            MOK_PENDING=true
+        else
+            info "MOK-Schlüssel ist noch nicht registriert. Bitte jetzt ein Einmal-Passwort vergeben:" "MOK key is not enrolled yet. Please set a one-time password now:"
+            if sudo mokutil --import "$SYS_MOK_DIR/MOK.der"; then
+                MOK_PENDING=true
+            else
+                err "mokutil --import ist fehlgeschlagen." "mokutil --import failed."
+            fi
+        fi
+    fi
+}
+
+install_autosign_hook() {
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp" <<EOF
+#!/bin/bash
+# $AUTOSIGN_MARKER
+# Signiert frisch installierte Kernel-Images mit dem lokalen MOK (Secure Boot).
+KEY="$SYS_MOK_DIR/MOK.priv"
+CERT="$SYS_MOK_DIR/MOK.pem"
+EOF
+    cat >> "$tmp" <<'EOF'
+
+command -v sbsign >/dev/null 2>&1 && command -v sbverify >/dev/null 2>&1 || exit 0
+if [ ! -r "$KEY" ] || [ ! -r "$CERT" ]; then
+    echo "sign_kernel_images: MOK key not found, skipping." >&2
+    exit 0
+fi
+
+if [ -n "${1:-}" ]; then
+    images=("${2:-/boot/vmlinuz-$1}")
+else
+    images=(/boot/vmlinuz-*)
+fi
+
+for image in "${images[@]}"; do
+    [ -f "$image" ] || continue
+    # Bereits signierte Images (z.B. Distributions-Kernel) bleiben unangetastet
+    if [[ "$(sbverify --list "$image" 2>&1)" != *"No signature table present"* ]]; then
+        continue
+    fi
+    if sbsign --key "$KEY" --cert "$CERT" --output "$image.signed" "$image" >/dev/null 2>&1; then
+        mv -f "$image.signed" "$image"
+        echo "sign_kernel_images: signed $image"
+    else
+        rm -f "$image.signed"
+        echo "sign_kernel_images: could not sign $image" >&2
+    fi
+done
+exit 0
+EOF
+    sudo install -D -m 755 "$tmp" "$AUTOSIGN_PATH"
+    rm -f "$tmp"
+    ok "Autosign-Script unter $AUTOSIGN_PATH konfiguriert." "Autosign script configured at $AUTOSIGN_PATH."
+}
+
+autosign_current() { [ -f "$AUTOSIGN_PATH" ] && grep -qF "$AUTOSIGN_MARKER" "$AUTOSIGN_PATH" 2>/dev/null; }
+
+manage_autosign() { # $1 = "force" bei --installautosign
+    if [ "${1:-}" = force ]; then
+        install_autosign_hook
+    elif [ -f "$AUTOSIGN_PATH" ]; then
+        if ! autosign_current; then
+            info "Veralteter Autosign-Hook gefunden - wird aktualisiert." "Outdated autosign hook found - updating."
+            install_autosign_hook
+        fi
+    elif [ "$WANT_AUTOSIGN" = true ] && ask_yn "$(L "Soll das Autosign-Script installiert werden?" "Should the autosign script be installed?")" y; then
+        install_autosign_hook
+    fi
+}
+
+uninstall_autosign() {
+    if [ -f "$AUTOSIGN_PATH" ]; then sudo rm -v "$AUTOSIGN_PATH"; fi
+    if ask_yn "$(L "Auch die System-Schlüssel in $SYS_MOK_DIR löschen?" "Delete system keys in $SYS_MOK_DIR too?")" n; then
+        sudo rm -rf "$SYS_MOK_DIR"
+    fi
+}
+
+sign_kernel() { # $1 = Kernel-Release
+    local img="/boot/vmlinuz-$1"
+    sudo test -f "$img" || die "Kernel-Image $img nicht gefunden." "Kernel image $img not found."
+    command -v sbsign >/dev/null 2>&1 || sudo apt-get install -y sbsigntool >/dev/null
+    if sudo sbverify --cert "$SYS_MOK_DIR/MOK.pem" "$img" >/dev/null 2>&1; then
+        ok "$img ist bereits mit dem MOK signiert." "$img is already signed with the MOK."
+        return 0
+    fi
+    sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" --output "$img.signed" "$img"
+    sudo mv -f "$img.signed" "$img"
+    ok "$img signiert." "$img signed."
+}
+
+manual_sign() {
+    local v="$SIGN_VERSION" list=() i choice
+    manage_keys
+    if [ -z "$v" ]; then
+        mapfile -t list < <(installed_kernels)
+        [ "${#list[@]}" -gt 0 ] || die "Keine Kernel in /boot gefunden." "No kernels found in /boot."
+        for i in "${!list[@]}"; do echo "  [$((i+1))] ${list[$i]}"; done
+        read -r -p "$(L "Auswahl oder Version" "Selection or version"): " choice
+        if [[ $choice =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#list[@]}" ]; then
+            v="${list[$((choice-1))]}"
+        else
+            v="$choice"
+        fi
+    fi
+    valid_release "$v" || die "Ungültige Version: $v" "Invalid version: $v"
+    sign_kernel "$v"
+}
+
+# ==============================================================================
+# INSTALLATION DES SKRIPTS
+# ==============================================================================
 
 setup_autocompletion() {
-    if [ ! -f "$COMPLETION_PATH" ]; then
-        sudo mkdir -p "$(dirname "$COMPLETION_PATH")"
-        sudo tee "$COMPLETION_PATH" > /dev/null << 'EOF'
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp" << 'EOF'
 _kernel_upgrade_completions() {
-    local cur opts
+    local cur prev opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    opts="-h --help --version --kernelversion --signonly --installautosign --uninstallautosign --purge-custom --install-system"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts="-h --help --version --kernelversion --jobs --no-reboot --purge-custom --with-dbg --keep-source -y --yes --no-autosign --dry-run --list --remove --cleanup --signonly --installautosign --uninstallautosign --install-system --update --no-update"
 
+    case "$prev" in
+        --kernelversion) COMPREPLY=( $(compgen -W "stable longterm mainline" -- "$cur") ); return 0 ;;
+        --remove|--signonly) COMPREPLY=( $(compgen -W "$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|/boot/vmlinuz-||')" -- "$cur") ); return 0 ;;
+    esac
     if [[ ${cur} == -* ]] ; then
         COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
         return 0
@@ -139,210 +828,212 @@ _kernel_upgrade_completions() {
 }
 complete -F _kernel_upgrade_completions kernel_upgrade
 EOF
-        source "$COMPLETION_PATH" 2>/dev/null || true
+    if ! cmp -s "$tmp" "$COMPLETION_PATH"; then
+        sudo install -D -m 644 "$tmp" "$COMPLETION_PATH" || true
+    fi
+    rm -f "$tmp"
+}
+
+install_file() { # $1 = Pfad im Repo, $2 = Ziel, $3 = Modus
+    local src="$SELF_DIR/$1"
+    mkdir -p "$(dirname "$2")"
+    if [ -f "$src" ]; then
+        [ "$src" -ef "$2" ] || install -m "$3" "$src" "$2"
+    elif ! { curl -fsSL --max-time 15 "$REPO_RAW/$1" -o "$2.tmp" && [ -s "$2.tmp" ] \
+             && chmod "$3" "$2.tmp" && mv -f "$2.tmp" "$2"; }; then
+        rm -f "$2.tmp"
+        return 1
     fi
 }
 
 install_systemwide() {
     local script_dir="$HOME/.scripts"
     local bashrc_file="$HOME/.bashrc"
-    local target_name="kernel_upgrade"
-    local target_file="$script_dir/$target_name"
+    local gui_deps=(python3-gi gir1.2-gtk-4.0 gir1.2-adw-1) missing=() p
 
-    yellow "Starte systemweite Installation..."
-    [ ! -d "$script_dir" ] && mkdir -p "$script_dir"
+    info "Starte systemweite Installation..." "Starting system-wide installation..."
+    mkdir -p "$script_dir"
 
-    if ! grep -q "PATH.*$HOME/.scripts" "$bashrc_file"; then
-        echo -e '\n# Custom scripts environment\nexport PATH="$PATH:$HOME/.scripts"' >> "$bashrc_file"
+    if ! grep -qE '^[^#]*PATH=.*\.scripts' "$bashrc_file" 2>/dev/null; then
+        # shellcheck disable=SC2016
+        printf '\n# Custom scripts environment\nexport PATH="$PATH:$HOME/.scripts"\n' >> "$bashrc_file"
     fi
 
-    cp "$0" "$target_file"
-    chmod +x "$target_file"
+    install_file "kernel_upgrade" "$script_dir/kernel_upgrade" 755
     setup_autocompletion
-    green "Systemweite Installation abgeschlossen! Starte das Terminal neu oder führe 'source ~/.bashrc' aus."
-}
 
-manage_keys() {
-    if [ ! -d "$USER_MOK_DIR" ]; then mkdir -p "$USER_MOK_DIR"; fi
-    if [ ! -f "$MOK_PRIV" ] || [ ! -f "$MOK_PEM" ]; then
-        yellow "$L_MOK_CHECK"
-        read -p "$L_MOK_GEN" gen_key
-        if [[ $gen_key =~ ^[yY]$ ]]; then
-            wget -q -O "$USER_MOK_DIR/mokconfig.cnf" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/signkernel/mokconfig.cnf"
-            openssl req -config "$USER_MOK_DIR/mokconfig.cnf" -new -x509 -newkey rsa:2048 -nodes -days 36500 -outform DER -keyout "$MOK_PRIV" -out "$MOK_DER"
-            openssl x509 -in "$MOK_DER" -inform DER -outform PEM -out "$MOK_PEM"
-            sudo mokutil --import "$MOK_DER"
-            green "$L_MOK_REBOOT"
-        else
-            red "Aborted."; exit 1
-        fi
-    fi
-    sudo mkdir -p "$SYS_MOK_DIR"
-    sudo cp "$MOK_PRIV" "$MOK_PEM" "$MOK_DER" "$SYS_MOK_DIR/"
-    sudo chmod 600 "$SYS_MOK_DIR/MOK.priv"
-
-    # FIX: Keys auch direkt nach /root/ kopieren für den offiziellen Mint Update Manager
-    sudo cp "$MOK_PRIV" "$MOK_PEM" "$MOK_DER" /root/
-    sudo chmod 600 /root/MOK.priv /root/MOK.pem /root/MOK.der 2>/dev/null || true
-}
-
-manage_autosign() {
-    if [ ! -f "$AUTOSIGN_PATH" ] || [ "$INSTALL_AUTOSIGN" = true ]; then
-        read -p "$L_AUTO_INST" inst_auto
-        if [[ $inst_auto =~ ^[yY]$ ]]; then
-            sudo wget -q -O "$AUTOSIGN_PATH" "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/v6.x/signkernel/etc/kernel/postinst.d/sign_kernel_images"
-            sudo sed -i "s|/root/MOK.priv|$SYS_MOK_DIR/MOK.priv|g" "$AUTOSIGN_PATH"
-            sudo sed -i "s|/root/MOK.pem|$SYS_MOK_DIR/MOK.pem|g" "$AUTOSIGN_PATH"
-            sudo chmod +x "$AUTOSIGN_PATH"
-            green "$(printf "$L_AUTO_DONE" "$AUTOSIGN_PATH")"
-        fi
-    fi
-}
-
-uninstall_autosign() {
-    [ -f "$AUTOSIGN_PATH" ] && sudo rm -v "$AUTOSIGN_PATH"
-    [ -f "$COMPLETION_PATH" ] && sudo rm -v "$COMPLETION_PATH"
-    read -p "Delete system keys in $SYS_MOK_DIR too? (y/n): " rm_keys
-    [[ $rm_keys =~ ^[yY]$ ]] && sudo rm -rf "$SYS_MOK_DIR"
-}
-
-manual_sign() {
-    manage_keys
-    if [ -n "${1:-}" ]; then KVER_S="$1"; else sudo ls /boot/vmlinuz-*; read -p "Version: " KVER_S; fi
-    sudo sbsign --key "$SYS_MOK_DIR/MOK.priv" --cert "$SYS_MOK_DIR/MOK.pem" "/boot/vmlinuz-$KVER_S" --output "/boot/vmlinuz-$KVER_S"
-    sudo update-grub
-}
-
-purge_old_custom_kernels() {
-    yellow "Bereinige alte Custom-Kernel-Reste aus dem System..."
-    local running_k
-    running_k=$(uname -r)
-    
-    # Dynamische Erkennung aller Kernel-Versionen, die KEINE offiziellen Endungen haben
-    local custom_versions
-    custom_versions=$(dpkg -l | awk '/^ii[[:space:]]+linux-image-[0-9]/ {print $2}' | grep -vE 'generic|amd64|oem|virtual|kvm' | sed 's/linux-image-//' || true)
-    
-    local pkgs_to_purge=""
-    for ver in $custom_versions; do
-        local associated_pkgs
-        associated_pkgs=$(dpkg -l | awk '/^ii/ {print $2}' | grep -F "$ver" || true)
-        pkgs_to_purge="$pkgs_to_purge $associated_pkgs"
-    done
-    
-    pkgs_to_purge=$(echo "$pkgs_to_purge" | xargs)
-    
-    if [ -n "$pkgs_to_purge" ]; then
-        for pkg in $pkgs_to_purge; do
-            if [[ "$pkg" == *"$running_k"* ]]; then
-                yellow "Überspringe Löschen von $pkg (aktiv geladen!)"
-            else
-                sudo apt-get purge -y "$pkg"
-            fi
-        done
-        sudo apt-get autoremove -y
-        sudo update-grub
-        green "System-Bereinigung erfolgreich abgeschlossen."
-    else
-        green "Keine zu löschenden Custom-Kernel gefunden."
-    fi
-    
-    # Reste in Debug- und Source-Ordnern löschen (gezielt für die gefundenen Custom-Versionen)
-    for ver in $custom_versions; do
-        if [[ "$ver" != "$running_k" ]]; then
-            sudo rm -rf "/usr/lib/debug/lib/modules/$ver" 2>/dev/null || true
-            sudo rm -rf "/usr/src/linux-headers-$ver" 2>/dev/null || true
-        fi
-    done
-}
-
-handle_resume() {
-    local actual_user="${SUDO_USER:-$(whoami)}"
-    local user_home
-    user_home=$(eval echo "~$actual_user")
-    
-    rm -f "$user_home/.config/autostart/kernel_upgrade_resume.desktop"
-    
-    yellow "Setze Kernel-Upgrade nach Neustart fort..."
-    purge_old_custom_kernels
-}
-
-handle_one_time_reboot() {
-    yellow "$L_PURGE_REBOOT"
-    
-    # Wähle explizit einen offiziellen Kernel (z.B. generic, amd64) und parse ggf. Submenüs
-    local target_kernel
-    target_kernel=$(sudo awk -F\' '
-        /^submenu / { submen=$2 }
-        /^[[:space:]]*menuentry / {
-            title=$2
-            if(submen) print submen ">" title
-            else print title
-        }
-    ' /boot/grub/grub.cfg | grep -iE "linux" | grep -iE "generic|amd64|oem" | grep -vi "recovery" | head -n 1 || true)
-    
-    if [ -z "$target_kernel" ]; then
-        red "Fehler: Kein offizieller Distributions-Kernel in GRUB gefunden!"
-        exit 1
-    fi
-    bwhite "Gewählter Kernel für Reboot: $target_kernel"
-
-    local current_user="${SUDO_USER:-$(whoami)}"
-    local user_home
-    user_home=$(eval echo "~$current_user")
-    local autostart_dir="$user_home/.config/autostart"
-
-    local script_path
-    script_path=$(realpath "${BASH_SOURCE[0]}")
-    local args="--purge-custom --resumed"
-    if [ -n "$MANUAL_KERNEL_VERSION" ]; then args="$args --kernelversion $MANUAL_KERNEL_VERSION"; fi
-
-    sudo -u "$current_user" mkdir -p "$autostart_dir"
-    cat <<EOF | sudo -u "$current_user" tee "$autostart_dir/kernel_upgrade_resume.desktop" > /dev/null
+    if install_file "$GUI_NAME" "$script_dir/$GUI_NAME" 755; then
+        install_file "assets/$ICON_NAME.svg" "$ICON_DIR/$ICON_NAME.svg" 644 || true
+        mkdir -p "$(dirname "$DESKTOP_FILE")"
+        cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=x-terminal-emulator -e bash -c "sleep 3; sudo $script_path $args; echo 'Fertig.'; read -p 'Druecke Enter zum Schliessen...'"
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-Name=Kernel Upgrade Resume
+Name=Kernel Upgrade
+GenericName=Kernel Builder
+GenericName[de]=Kernel-Baukasten
+Comment=Compile, install and sign mainline Linux kernels
+Comment[de]=Mainline-Kernel kompilieren, installieren und signieren
+Exec="$script_dir/$GUI_NAME"
+Icon=$ICON_NAME
+Terminal=false
+Categories=System;
+Keywords=kernel;linux;waydroid;secureboot;
+StartupWMClass=io.github.soulinfernode.KernelUpgrade
 EOF
+        command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
+        command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "${ICON_DIR%/scalable/apps}" 2>/dev/null || true
 
-    sudo grub-reboot "$target_kernel"
-    
-    echo ""
-    for i in {10..1}; do
-        printf "$L_REBOOT_COUNT" "$i"
-        sleep 1
-    done
-    echo -e "\n\033[0;32mNeustart wird jetzt durchgeführt...\033[0m"
-    sudo reboot
+        for p in "${gui_deps[@]}"; do
+            [[ "$(dpkg-query -W -f '${db:Status-Abbrev}' "$p" 2>/dev/null || true)" == ii* ]] || missing+=("$p")
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+            info "Für die GUI fehlen Pakete: ${missing[*]}" "The GUI needs these packages: ${missing[*]}"
+            if ask_yn "$(L "Jetzt installieren?" "Install now?")" y; then
+                sudo apt-get install -y "${missing[@]}"
+            fi
+        fi
+        ok "GUI installiert - im Anwendungsmenü unter 'Kernel Upgrade'." "GUI installed - find 'Kernel Upgrade' in your application menu."
+    else
+        info "GUI konnte nicht installiert werden (Datei $GUI_NAME nicht gefunden)." "GUI could not be installed (file $GUI_NAME not found)."
+    fi
+
+    ok "Systemweite Installation abgeschlossen! Starte das Terminal neu oder führe 'source ~/.bashrc' aus." \
+       "System-wide installation finished! Restart the terminal or run 'source ~/.bashrc'."
 }
 
-# --- LOGIK-PHASE ---
+# ==============================================================================
+# STATUS / LISTE
+# ==============================================================================
 
-if [ "$INSTALL_SYSTEM" = true ]; then
-    install_systemwide
-    exit 0
-fi
+json_str() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+json_bool() { if "$@" >/dev/null 2>&1; then printf true; else printf false; fi; }
 
-sudo -v
-while true; do sudo -v; sleep 60; done &
-SUDO_PID=$!
+print_status_json() {
+    local running v first=true sb="unknown" mok="none" hook="none" free_dir free_gb
+    running=$(uname -r)
 
-setup_autocompletion
+    if ! is_efi; then sb="unsupported"
+    elif command -v mokutil >/dev/null 2>&1; then
+        if mokutil --sb-state 2>/dev/null | grep -qi 'enabled'; then sb="enabled"; else sb="disabled"; fi
+    fi
+    if [ -f "$SYS_MOK_DIR/MOK.der" ]; then
+        mok="present"
+        if command -v mokutil >/dev/null 2>&1; then
+            v=$(mokutil --test-key "$SYS_MOK_DIR/MOK.der" 2>&1 || true)
+            if grep -qi 'already enrolled' <<<"$v"; then mok="enrolled"
+            elif grep -qi 'enrollment request' <<<"$v"; then mok="pending"; fi
+        fi
+    elif [ -f "$MOK_PEM" ]; then mok="present"
+    fi
+    if [ -f "$AUTOSIGN_PATH" ]; then
+        if autosign_current; then hook="current"; else hook="outdated"; fi
+    fi
+    free_dir="$WORK"; [ -d "$free_dir" ] || free_dir="$CPATH"; [ -d "$free_dir" ] || free_dir="$HOME"
+    free_gb=$(df -BG --output=avail "$free_dir" 2>/dev/null | tail -n 1 | tr -dc '0-9' || true)
+
+    collect_purge_targets
+    printf '{"script_version":%s,"running":%s,"running_custom":%s,"stock_kernel":%s,' \
+        "$(json_str "$SCRIPT_VERSION")" "$(json_str "$running")" \
+        "$(json_bool is_custom_kernel "$running")" "$(json_str "$(newest_stock_kernel)")"
+    printf '"localversion":%s,"secure_boot":%s,"mok":%s,"autosign":%s,' \
+        "$(json_str "$LOCALVER")" "$(json_str "$sb")" "$(json_str "$mok")" "$(json_str "$hook")"
+    printf '"free_gb":%s,"cores":%s,"work_dir":%s,"pending_resume":%s,"libc_dev_custom":%s,' \
+        "${free_gb:-0}" "$(nproc)" "$(json_str "$WORK")" "$(json_bool pending_resume)" \
+        "$(json_bool test "$(dpkg-query -W -f '${source:Package}' linux-libc-dev 2>/dev/null || true)" = linux-upstream)"
+    printf '"installed_systemwide":%s,"kernels":[' "$(json_bool test -x "$HOME/.scripts/kernel_upgrade")"
+    while IFS= read -r v; do
+        $first || printf ','
+        first=false
+        printf '{"version":%s,"custom":%s,"running":%s}' "$(json_str "$v")" \
+            "$(json_bool is_custom_kernel "$v")" "$(json_bool test "$v" = "$running")"
+    done < <(installed_kernels)
+    printf '],"leftovers":['
+    first=true
+    for v in ${PURGE_VERS[@]+"${PURGE_VERS[@]}"}; do
+        [ -e "/boot/vmlinuz-$v" ] && continue
+        $first || printf ','
+        first=false
+        json_str "$v"
+    done
+    printf ']}\n'
+}
+
+fetch_releases() {
+    local t
+    for t in curl jq; do
+        if ! command -v "$t" >/dev/null 2>&1; then
+            info "Installiere $t..." "Installing $t..."
+            sudo apt-get install -y "$t" >/dev/null
+        fi
+    done
+    # Direkt nach dem Login (Fortsetzung nach Neustart) steht das Netzwerk oft
+    # noch nicht - deshalb bis zu NET_WAIT Sekunden auf die Verbindung warten.
+    local start=$SECONDS announced=false
+    until RELEASES_JSON=$(curl -fsSL --connect-timeout 5 --max-time 20 https://www.kernel.org/releases.json 2>/dev/null) \
+          && jq -e '.releases | length > 0' >/dev/null 2>&1 <<<"$RELEASES_JSON"; do
+        if [ $((SECONDS - start)) -ge "$NET_WAIT" ]; then
+            die "kernel.org ist auch nach $NET_WAIT Sekunden nicht erreichbar. Bitte Netzwerkverbindung prüfen." \
+                "kernel.org is still not reachable after $NET_WAIT seconds. Please check your network connection."
+        fi
+        if [ "$announced" = false ]; then
+            announced=true
+            info "kernel.org ist nicht erreichbar - warte auf die Netzwerkverbindung (bis zu $NET_WAIT Sekunden)..." \
+                 "kernel.org is not reachable - waiting for the network connection (up to $NET_WAIT seconds)..."
+        fi
+        sleep 3
+    done
+    if [ "$announced" = true ]; then ok "Netzwerkverbindung steht." "Network connection is up."; fi
+}
+
+list_kernels() {
+    local v tag
+    say "Installierte Kernel:" "Installed kernels:"
+    while IFS= read -r v; do
+        if is_custom_kernel "$v"; then tag="custom"; else tag="stock"; fi
+        [ "$v" != "$(uname -r)" ] || tag="$tag, $(L "aktiv" "running")"
+        printf '  %-32s [%s]\n' "$v" "$tag"
+    done < <(installed_kernels)
+    echo
+    say "Verfügbar auf kernel.org:" "Available on kernel.org:"
+    fetch_releases
+    jq -r '.releases[] | select(.moniker != "linux-next") | "  \(.version)\t[\(.moniker)]\(if .iseol then " EOL" else "" end)"' <<<"$RELEASES_JSON" | expand -t 34
+}
+
+# ==============================================================================
+# LOGIK-PHASE
+# ==============================================================================
+
+case "$MODE" in
+    autostart) autostart_resume; exit 0 ;;
+    status) print_status_json; exit 0 ;;
+    list) list_kernels; exit 0 ;;
+    installsystem) install_systemwide; exit 0 ;;
+    remove) remove_single_kernel; exit 0 ;;
+    cleanup)
+        start_sudo
+        if pending_resume; then cancel_pending_resume; fi
+        purge_old_custom_kernels
+        exit 0 ;;
+    uninstallautosign) start_sudo; uninstall_autosign; exit 0 ;;
+    installautosign) start_sudo; manage_keys; manage_autosign force; exit 0 ;;
+    sign) start_sudo; manual_sign; exit 0 ;;
+esac
+
+start_sudo
+[ "$DRY_RUN" = true ] || [ ! -f "$COMPLETION_PATH" ] || setup_autocompletion
 
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
     handle_resume
+elif pending_resume; then
+    # Ein früherer Lauf wurde vor dem Neustart abgebrochen: Autostart-Eintrag und
+    # der einmalige GRUB-Booteintrag würden sonst beim nächsten Start zuschlagen.
+    info "Entferne Reste eines abgebrochenen Neustart-Vorgangs..." "Removing leftovers of an aborted reboot sequence..."
+    cancel_pending_resume
 fi
 
-if [ "$UNINSTALL_AUTOSIGN" = true ]; then uninstall_autosign; kill "$SUDO_PID"; exit 0; fi
-if [ "$INSTALL_AUTOSIGN" = true ]; then manage_autosign; kill "$SUDO_PID"; exit 0; fi
-if [ "$SIGN_ONLY" = true ]; then manual_sign ""; kill "$SUDO_PID"; exit 0; fi
-
-# CRITICAL ENVIRONMENT-CHECK: Wirft einen Reboot, wenn wir NICHT in einem offiziellen Kernel sind
-if ! uname -r | grep -qiE "generic|amd64|oem|virtual|kvm" && [ "$RESUMED_FROM_REBOOT" = false ]; then
+# CRITICAL ENVIRONMENT-CHECK: Neustart, wenn wir NICHT in einem offiziellen Kernel sind
+if [ "$RESUMED_FROM_REBOOT" = false ] && [ "$NO_REBOOT" = false ] && is_custom_kernel "$(uname -r)"; then
     handle_one_time_reboot
-    kill "$SUDO_PID"
     exit 0
 fi
 
@@ -354,100 +1045,283 @@ fi
 # AB HIER ERST: Netzwertraffic & Kompilier-Infrastruktur
 # ==============================================================================
 
-JSON="$(curl -fsSL https://www.kernel.org/releases.json)"
+stage 1 "Version ermitteln & Abhängigkeiten" "Resolve version & dependencies"
 
-if [ -n "$MANUAL_KERNEL_VERSION" ]; then
-    KERNEL_VERSION="$MANUAL_KERNEL_VERSION"
-else
-    KERNEL_VERSION=$(echo "$JSON" | jq -r '.releases[] | select(.moniker=="stable") | .version' | head -n 1)
+if [ "$DRY_RUN" = true ] && ! { command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; }; then
+    die "Für --dry-run werden curl und jq benötigt." "--dry-run needs curl and jq."
 fi
+fetch_releases
 
-CURRENT_RUNNING=$(uname -r)
-IS_INSTALLED=$(dpkg -l | grep "linux-image-${KERNEL_VERSION}-waydroid" || true)
+EXPLICIT_VERSION=false
+case "$MANUAL_KERNEL_VERSION" in
+    ""|stable|latest) KERNEL_VERSION=$(jq -r '.latest_stable.version' <<<"$RELEASES_JSON") ;;
+    longterm|lts) KERNEL_VERSION=$(jq -r 'first(.releases[] | select(.moniker=="longterm") | .version)' <<<"$RELEASES_JSON") ;;
+    mainline|rc) KERNEL_VERSION=$(jq -r 'first(.releases[] | select(.moniker=="mainline") | .version)' <<<"$RELEASES_JSON") ;;
+    *) KERNEL_VERSION="$MANUAL_KERNEL_VERSION"; EXPLICIT_VERSION=true ;;
+esac
 
-if [[ "$CURRENT_RUNNING" == "${KERNEL_VERSION}-waydroid" ]] || [ -n "$IS_INSTALLED" ]; then
-    yellow "$(printf "$L_KEXIST" "$KERNEL_VERSION")"
-    echo -e "$L_KALT_PROMPT"
-    
-    mapfile -t ALTS < <(echo "$JSON" | jq -r '.releases[] | select(.moniker=="stable") | .version' | head -n 4 | grep -v "$KERNEL_VERSION" | head -n 3)
-    
-    for i in "${!ALTS[@]}"; do echo "  [$((i+1))] ${ALTS[$i]}"; done
-    echo "  [4] Manuelle Version eintippen"
-    
-    read -p "Auswahl (1-4): " choice
-    case $choice in
-        1) KERNEL_VERSION="${ALTS[0]}" ;;
-        2) KERNEL_VERSION="${ALTS[1]}" ;;
-        3) KERNEL_VERSION="${ALTS[2]}" ;;
-        4) read -p "Bitte Wunschversion eingeben (z.B. 6.12.1): " KERNEL_VERSION ;;
-        *) yellow "Ungültige Auswahl. Fahre trotzdem mit $KERNEL_VERSION fort..." ;;
-    esac
-fi
+valid_kernel_version() { [[ $1 =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-rc[0-9]+)?$ ]]; }
+kernel_present() { # $1 = Release
+    [ "$(uname -r)" = "$1" ] || [[ "$(dpkg-query -W -f '${db:Status-Abbrev}' "linux-image-$1" 2>/dev/null || true)" == ii* ]]
+}
 
-MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
-DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+valid_kernel_version "$KERNEL_VERSION" || die "Ungültige Kernel-Version: $KERNEL_VERSION" "Invalid kernel version: $KERNEL_VERSION"
 
-DEB_COUNT=$(find "$CPATH" -maxdepth 1 -name "linux-*.deb" | wc -l)
-DEB_COUNT=${DEB_COUNT//[[:space:]]/}
-
-if [ "$DEB_COUNT" -gt 0 ]; then
-    yellow "$(printf "$L_DEB_FOUND" "$DEB_COUNT")"
-    read -p "$L_SKIP_PROMPT" skip
-    if [[ $skip =~ ^[yY]$ ]]; then
-        sudo dpkg -i "$CPATH"/linux-*.deb
-        if [ ! -f "$AUTOSIGN_PATH" ] && [ -f "$MOK_PRIV" ]; then
-            EXT_VER=$(ls "$CPATH"/linux-image-*.deb 2>/dev/null | head -n 1 | sed -r 's/.*image-(.*)_.*\.deb/\1/')
-            [ -n "$EXT_VER" ] && manual_sign "$EXT_VER"
-        elif [ ! -f "$AUTOSIGN_PATH" ]; then
-            manual_sign ""
-        fi
-        kill "$SUDO_PID"; exit 0
+if kernel_present "$(expected_release "$KERNEL_VERSION")"; then
+    info "Kernel $KERNEL_VERSION ist bereits gebaut/installiert!" "Kernel $KERNEL_VERSION is already built/installed!"
+    if [ "$EXPLICIT_VERSION" = true ]; then
+        ask_yn "$(L "Trotzdem neu bauen?" "Rebuild anyway?")" y || exit 0
+    elif [ "$ASSUME_YES" = true ] || [ ! -t 0 ]; then
+        ok "Das System ist aktuell - nichts zu tun." "The system is up to date - nothing to do."
+        marker "uptodate"
+        exit 0
+    else
+        say "Wähle eine alternative Version oder tippe eine ein:" "Select an alternative version or type one manually:"
+        mapfile -t ALTS < <(jq -r --arg cur "$KERNEL_VERSION" \
+            '[.releases[] | select(.moniker=="stable" or .moniker=="longterm" or .moniker=="mainline") | select(.version != $cur)][:5][] | "\(.version) \(.moniker)"' <<<"$RELEASES_JSON")
+        for i in "${!ALTS[@]}"; do printf '  [%s] %-12s (%s)\n' "$((i+1))" "${ALTS[$i]%% *}" "${ALTS[$i]##* }"; done
+        echo "  [r] $(L "$KERNEL_VERSION neu bauen" "Rebuild $KERNEL_VERSION")"
+        echo "  [q] $(L "Abbrechen" "Quit")"
+        read -r -p "$(L "Auswahl oder Version (z.B. 6.12.1)" "Selection or version (e.g. 6.12.1)"): " choice
+        case "$choice" in
+            q|Q|"") exit 0 ;;
+            r|R) ;;
+            *)
+                if [[ $choice =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#ALTS[@]}" ]; then
+                    KERNEL_VERSION="${ALTS[$((choice-1))]%% *}"
+                else
+                    KERNEL_VERSION="$choice"
+                fi ;;
+        esac
+        valid_kernel_version "$KERNEL_VERSION" || die "Ungültige Kernel-Version: $KERNEL_VERSION" "Invalid kernel version: $KERNEL_VERSION"
     fi
 fi
 
-yellow "$L_INST_DEP"
-sudo apt-get install -y git dwarves build-essential fakeroot bc kmod cpio libxi-dev libncurses5-dev libgtk2.0-dev libglib2.0-dev libglade2-dev libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev dpkg-dev autoconf libdw-dev cmake zstd packagekit qt5ct libpackagekitqt5-dev nano patch patchutils jq > /dev/null || { red "$L_ERR_DEP"; kill $SUDO_PID; exit 1; }
+EXPECT_REL=$(expected_release "$KERNEL_VERSION")
+MAJOR="${KERNEL_VERSION%%.*}"
+DL_URL=$(jq -r --arg v "$KERNEL_VERSION" 'first(.releases[] | select(.version==$v) | .source // empty) // empty' <<<"$RELEASES_JSON")
+if [ -z "$DL_URL" ]; then
+    if [[ $KERNEL_VERSION == *-rc* ]]; then
+        DL_URL="https://git.kernel.org/torvalds/t/linux-${KERNEL_VERSION}.tar.gz"
+    else
+        DL_URL="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+    fi
+fi
+TARBALL="${DL_URL##*/}"
+say "Nutze Version: $KERNEL_VERSION  ->  $EXPECT_REL" "Using version: $KERNEL_VERSION  ->  $EXPECT_REL"
 
-cd "$CPATH"
-find . -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
-find . -maxdepth 1 -type f \( -name 'linux-*.tar.*' -o -name 'linux-*.zip' \) -exec rm -f {} +
-
-yellow "$(printf "$L_DL_VER" "$KERNEL_VERSION")"
-wget -q --show-progress "$DL_URL"
-tar -xf "linux-${KERNEL_VERSION}.tar.xz"
-cd "linux-${KERNEL_VERSION}"
-
-cp "/boot/config-$(uname -r)" .config
-make olddefconfig
-
-wget -q -O .config-fragment "https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/um790pro/nogui/.config-fragment"
-sed -i 's/-um790pro/-waydroid/g' .config-fragment
-./scripts/kconfig/merge_config.sh .config .config-fragment
-make olddefconfig
-
-if ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
-    sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
+if [ "$DRY_RUN" = true ]; then
+    say "Download: $DL_URL" "Download: $DL_URL"
+    say "Build-Verzeichnis: $WORK (make -j$CPUCORES bindeb-pkg)" "Build directory: $WORK (make -j$CPUCORES bindeb-pkg)"
+    ok "Dry-Run beendet - es wurde nichts verändert." "Dry run finished - nothing was changed."
+    exit 0
 fi
 
-time nice make bindeb-pkg -j"$CPUCORES"
+# --- Build-Verzeichnis ---
+# Ein eigenes Verzeichnis statt ~/Downloads, damit beim Aufräumen garantiert
+# nur Dateien dieses Skripts gelöscht werden.
+if [ -d "$WORK" ] && [ ! -f "$WORK/$WORK_MARKER" ] && [ -n "$(ls -A "$WORK")" ]; then
+    die "$WORK existiert bereits und gehört nicht zu kernel_upgrade. Bitte KU_BUILD_DIR setzen." \
+        "$WORK already exists and does not belong to kernel_upgrade. Please set KU_BUILD_DIR."
+fi
+mkdir -p "$WORK"
+touch "$WORK/$WORK_MARKER"
 
-FULL_KVER="${KERNEL_VERSION}-waydroid"
+find_debs() { # setzt DEB_IMAGE, DEB_HEADERS, DEB_DBG für Release $1
+    DEB_IMAGE=$(ls -t "$WORK"/linux-image-"$1"_*.deb 2>/dev/null | head -n 1 || true)
+    DEB_HEADERS=$(ls -t "$WORK"/linux-headers-"$1"_*.deb 2>/dev/null | head -n 1 || true)
+    DEB_DBG=$(ls -t "$WORK"/linux-image-"$1"-dbg_*.deb 2>/dev/null | head -n 1 || true)
+}
 
-if [ -f "$AUTOSIGN_PATH" ]; then
-    manage_keys
-    sudo dpkg -i "$CPATH"/linux-*.deb
-elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
-    manage_keys
-    sudo dpkg -i "$CPATH"/linux-*.deb
-    manual_sign "$FULL_KVER"
-else
+SKIP_BUILD=false
+find_debs "$EXPECT_REL"
+if [ -n "$DEB_IMAGE" ] && [ -n "$DEB_HEADERS" ]; then
+    info "Fertige Kernel-Pakete für $EXPECT_REL gefunden." "Found finished kernel packages for $EXPECT_REL."
+    if ask_yn "$(L "Build überspringen und nur installieren & signieren?" "Skip build and only install & sign?")" y; then
+        SKIP_BUILD=true
+    fi
+fi
+
+KREL="$EXPECT_REL"
+BUILD_SECONDS=0
+
+if [ "$SKIP_BUILD" = false ]; then
+    info "Installiere Abhängigkeiten..." "Installing dependencies..."
+    REQ_PKGS=(build-essential bc bison flex libssl-dev libelf-dev libdw-dev dwarves fakeroot dpkg-dev debhelper
+              kmod cpio rsync zstd xz-utils gawk python3 git patch patchutils libncurses-dev openssl
+              sbsigntool mokutil jq curl wget ca-certificates dkms libudev-dev libpci-dev libiberty-dev
+              autoconf cmake)
+    INSTALLED=$(dpkg-query -W -f '${Package} ${db:Status-Abbrev}\n' "${REQ_PKGS[@]}" 2>/dev/null | awk '$2 ~ /^ii/ { print $1 }' || true)
+    TO_INSTALL=()
+    for p in "${REQ_PKGS[@]}"; do
+        grep -qxF "$p" <<<"$INSTALLED" && continue
+        if apt-cache show "$p" >/dev/null 2>&1; then
+            TO_INSTALL+=("$p")
+        else
+            info "Paket $p ist in den Paketquellen nicht verfügbar - übersprungen." "Package $p is not available in the repositories - skipped."
+        fi
+    done
+    if [ "${#TO_INSTALL[@]}" -gt 0 ]; then
+        say "  ${TO_INSTALL[*]}"
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${TO_INSTALL[@]}" > /dev/null \
+            || die "Fehler: Abhängigkeiten konnten nicht installiert werden." "Error: dependencies could not be installed."
+    fi
+    for t in gcc make bc bison flex fakeroot dpkg-buildpackage wget tar; do
+        command -v "$t" >/dev/null 2>&1 || die "Fehler: Benötigtes Werkzeug fehlt: $t" "Error: required tool missing: $t"
+    done
+
+    FREE_GB=$(df -BG --output=avail "$WORK" | tail -n 1 | tr -dc '0-9')
+    if [ "${FREE_GB:-0}" -lt 45 ]; then
+        info "Nur ${FREE_GB} GB frei in $WORK - ein Build mit Debug-Infos braucht bis zu 45 GB." \
+             "Only ${FREE_GB} GB free in $WORK - a build with debug info needs up to 45 GB."
+        ask_yn "$(L "Trotzdem fortfahren?" "Continue anyway?")" y || exit 1
+    fi
+
+    # --- Download ---
+    stage 2 "Kernel-Quellen herunterladen" "Download kernel sources"
+    # Alles außer dem passenden Tarball stammt aus früheren Läufen
+    find "$WORK" -mindepth 1 -maxdepth 1 ! -name "$WORK_MARKER" ! -name "$TARBALL" -exec rm -rf {} +
+    wget -c -q --show-progress -P "$WORK" "$DL_URL"
+
+    if [[ $DL_URL == https://cdn.kernel.org/* ]]; then
+        WANT_SUM=$(curl -fsSL --max-time 30 "${DL_URL%/*}/sha256sums.asc" 2>/dev/null | awk -v f="$TARBALL" '$2 == f { print $1 }' || true)
+        if [ -n "$WANT_SUM" ]; then
+            GOT_SUM=$(sha256sum "$WORK/$TARBALL" | cut -d' ' -f1)
+            if [ "$WANT_SUM" != "$GOT_SUM" ]; then
+                rm -f "$WORK/$TARBALL"
+                die "Prüfsumme von $TARBALL stimmt nicht! Datei gelöscht - bitte erneut starten." \
+                    "Checksum mismatch for $TARBALL! File deleted - please run again."
+            fi
+            ok "SHA256-Prüfsumme stimmt." "SHA256 checksum verified."
+        else
+            info "Keine Prüfsumme für $TARBALL gefunden - überspringe Prüfung." "No checksum found for $TARBALL - skipping verification."
+        fi
+    fi
+
+    info "Entpacke $TARBALL..." "Extracting $TARBALL..."
+    tar -xf "$WORK/$TARBALL" -C "$WORK"
+    SRC_DIR="$WORK/linux-${KERNEL_VERSION}"
+    [ -d "$SRC_DIR" ] || die "Quellverzeichnis $SRC_DIR fehlt nach dem Entpacken." "Source directory $SRC_DIR missing after extraction."
+    cd "$SRC_DIR"
+
+    # --- Konfiguration ---
+    stage 3 "Kernel konfigurieren" "Configure kernel"
+    # Basis ist immer die Konfiguration des Distributions-Kernels
+    BASE_CONFIG=""
+    STOCK=$(newest_stock_kernel)
+    if [ -n "$STOCK" ] && [ -f "/boot/config-$STOCK" ]; then BASE_CONFIG="/boot/config-$STOCK"
+    elif [ -f "/boot/config-$(uname -r)" ]; then BASE_CONFIG="/boot/config-$(uname -r)"
+    fi
+    if [ -n "$BASE_CONFIG" ]; then
+        say "Basis-Konfiguration: $BASE_CONFIG" "Base configuration: $BASE_CONFIG"
+        cp "$BASE_CONFIG" .config
+    elif [ -f /proc/config.gz ]; then
+        zcat /proc/config.gz > .config
+    else
+        die "Keine Kernel-Konfiguration als Basis gefunden." "No kernel configuration found to start from."
+    fi
+    make olddefconfig
+
+    if [ -f "$USER_FRAGMENT" ]; then
+        say "Nutze eigenes Fragment: $USER_FRAGMENT" "Using custom fragment: $USER_FRAGMENT"
+        cp "$USER_FRAGMENT" .config-fragment
+    else
+        cat > .config-fragment <<EOF
+#
+# Certificates for signature checking
+#
+CONFIG_SYSTEM_TRUSTED_KEYS=""
+CONFIG_SYSTEM_REVOCATION_KEYS=""
+CONFIG_LOCALVERSION="$LOCALVER"
+#
+# Android
+#
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder,binderfs"
+CONFIG_ANDROID_BINDER_IPC_SELFTEST=y
+# end of Android
+#
+# Performance monitoring
+#
+CONFIG_PERF_EVENTS_AMD_POWER=m
+#
+# Misc devices
+#
+CONFIG_NTSYNC=y
+EOF
+    fi
+    ./scripts/kconfig/merge_config.sh .config .config-fragment
+    make olddefconfig
+    KREL=$(make -s kernelrelease)
+
+    # Neuere Kernel legen die .config bereits selbst ins Header-Paket
+    if ! grep -q '\.config' scripts/package/install-extmod-build 2>/dev/null \
+       && grep -q '^install_kernel_headers () {' "$BUILDDEB_FILE" 2>/dev/null \
+       && ! grep -qF "$MARKER" "$BUILDDEB_FILE"; then
+        sed -i "/^install_kernel_headers () {/,/^}/ s|^}|    $MARKER\n    [ -f .config ] \&\& cp .config \"\$pdir/usr/src/linux-headers-\${version}/.config\"\n}|" "$BUILDDEB_FILE"
+    fi
+
+    # --- Build ---
+    stage 4 "Kernel $KREL kompilieren (-j$CPUCORES)" "Compile kernel $KREL (-j$CPUCORES)"
+    SECONDS=0
+    if ! nice make -j"$CPUCORES" bindeb-pkg 2>&1 | tee "$WORK/build.log"; then
+        err "Build fehlgeschlagen. Vollständiges Protokoll: $WORK/build.log" "Build failed. Full log: $WORK/build.log"
+        grep -nE '(error:|Error [0-9]+|\*\*\*)' "$WORK/build.log" | tail -n 15 >&2 || true
+        exit 1
+    fi
+    BUILD_SECONDS=$SECONDS
+    cd "$WORK"
+    find_debs "$KREL"
+fi
+
+[ -n "$DEB_IMAGE" ] || die "Kein Kernel-Paket für $KREL in $WORK gefunden." "No kernel package for $KREL found in $WORK."
+
+# --- Installation ---
+stage 5 "Kernel installieren" "Install kernel"
+SIGNING=false
+if is_efi || [ -f "$MOK_PRIV" ]; then
+    command -v sbsign >/dev/null 2>&1 || sudo apt-get install -y sbsigntool mokutil >/dev/null
     manage_keys
     manage_autosign
-    sudo dpkg -i "$CPATH"/linux-*.deb
-    if [ ! -f "$AUTOSIGN_PATH" ] ; then
-        manual_sign "$FULL_KVER"
-    fi
+    SIGNING=true
+else
+    info "Kein UEFI-System - Signierung wird übersprungen." "Not a UEFI system - skipping signing."
 fi
 
-kill "$SUDO_PID" 2>/dev/null || true
-green "$L_DONE"
+# linux-libc-dev wird bewusst NICHT installiert: es würde das Paket der Distribution ersetzen.
+DEBS=("$DEB_IMAGE")
+[ -z "$DEB_HEADERS" ] || DEBS+=("$DEB_HEADERS")
+if [ "$WITH_DBG" = true ] && [ -n "$DEB_DBG" ]; then DEBS+=("$DEB_DBG"); fi
+sudo dpkg -i "${DEBS[@]}"
+
+stage 6 "Kernel signieren" "Sign kernel"
+if [ "$SIGNING" = true ]; then
+    sign_kernel "$KREL"
+else
+    info "Übersprungen." "Skipped."
+fi
+
+# --- Aufräumen ---
+stage 7 "Aufräumen" "Clean up"
+if [ "$KEEP_SOURCE" = false ]; then
+    find "$WORK" -mindepth 1 -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
+    rm -f "$WORK"/linux-*.tar.* "$WORK"/linux-libc-dev_*.deb "$WORK"/linux-upstream_*
+    if [ "$WITH_DBG" = false ]; then rm -f "$WORK"/linux-image-*-dbg_*.deb; fi
+    ok "Quellbaum entfernt. Pakete liegen in $WORK." "Source tree removed. Packages are in $WORK."
+fi
+clean_legacy_artifacts
+
+echo
+ok "Kernel Upgrade erfolgreich abgeschlossen!" "Kernel upgrade completed successfully!"
+say "Installiert: $KREL" "Installed: $KREL"
+if [ "$BUILD_SECONDS" -gt 0 ]; then
+    say "Build-Dauer: $((BUILD_SECONDS / 60)) min $((BUILD_SECONDS % 60)) s" "Build time: $((BUILD_SECONDS / 60)) min $((BUILD_SECONDS % 60)) s"
+fi
+if [ "$MOK_PENDING" = true ]; then
+    info "WICHTIG: Beim nächsten Neustart im blauen MOK-Manager 'Enroll MOK' wählen und das Einmal-Passwort eingeben!" \
+         "IMPORTANT: on the next reboot select 'Enroll MOK' in the blue MOK manager and enter the one-time password!"
+    marker "mok-pending"
+fi
+info "Starte das System neu, um den neuen Kernel zu nutzen." "Reboot the system to use the new kernel."
+marker "done $KREL"

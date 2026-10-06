@@ -1,0 +1,970 @@
+#!/usr/bin/env python3
+"""Kernel Upgrade - graphical front end for the kernel_upgrade script.
+
+The GUI never duplicates the script's logic: it reads the system state from
+`kernel_upgrade --status-json` and runs the script inside a pseudo terminal,
+so sudo, mokutil and every other prompt keep working exactly as in a shell.
+"""
+
+import codecs
+import fcntl
+import json
+import os
+import re
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import termios
+import threading
+import time
+import urllib.request
+
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
+    if (Adw.get_major_version(), Adw.get_minor_version()) < (1, 5):
+        raise ImportError("libadwaita >= 1.5 required")
+except (ImportError, ValueError) as exc:
+    sys.exit(f"kernel_upgrade_gui: {exc}\n"
+             "Install the GUI dependencies with:\n"
+             "  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1")
+
+APP_ID = "io.github.soulinfernode.KernelUpgrade"
+HERE = os.path.dirname(os.path.realpath(__file__))
+RELEASES_URL = "https://www.kernel.org/releases.json"
+PROJECT_URL = "https://github.com/SoulInfernoDE/compile-kernel-from-source"
+NET_WAIT = 60  # seconds to wait for the network before giving up
+
+_LANG = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
+GERMAN = _LANG.startswith("de")
+
+
+def T(de, en):
+    """Pick the German or English text, matching the script's own language switch."""
+    return de if GERMAN else en
+
+
+def find_script():
+    local = os.path.join(HERE, "kernel_upgrade")
+    if os.access(local, os.X_OK):
+        return local
+    return shutil.which("kernel_upgrade")
+
+
+def expected_release(version, localversion):
+    """7.2 -> 7.2.0-waydroid, 7.3-rc6 -> 7.3.0-rc6-waydroid (same as the script)."""
+    base, _, rc = version.partition("-")
+    if re.fullmatch(r"\d+\.\d+", base):
+        base += ".0"
+    return base + (f"-{rc}" if rc else "") + localversion
+
+
+CSS = """
+.ku-hero {
+  padding: 26px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #2b3a78 0%, #131a3a 60%, #0d1226 100%);
+  color: #f4f6ff;
+}
+.ku-hero .ku-kernel { font-size: 22pt; font-weight: 800; }
+.ku-hero .ku-dim { color: alpha(#f4f6ff, 0.72); }
+.ku-chip {
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 9pt;
+  font-weight: 700;
+  background: alpha(#ffffff, 0.14);
+}
+.ku-chip.good { background: alpha(#4ade80, 0.22); color: #bbf7d0; }
+.ku-chip.warn { background: alpha(#fbbf24, 0.22); color: #fde68a; }
+.ku-go {
+  background: linear-gradient(180deg, #4ade80, #22c3b6);
+  color: #06241c;
+  font-weight: 800;
+  padding: 10px 26px;
+}
+.ku-go:hover { background: linear-gradient(180deg, #6ee7a0, #2dd4c5); }
+.ku-go:disabled { background: alpha(#ffffff, 0.16); color: alpha(#ffffff, 0.5); }
+textview.ku-log, textview.ku-log text {
+  background-color: #11131c;
+  color: #d7dae0;
+}
+textview.ku-log { font-family: monospace; font-size: 10pt; padding: 12px; }
+.ku-logframe { border-radius: 12px; border: 1px solid alpha(currentColor, 0.12); }
+.ku-password { box-shadow: inset 0 0 0 2px @warning_color; }
+"""
+
+ANSI_COLORS = {
+    30: "#6b7089", 31: "#ff6b6b", 32: "#4ade80", 33: "#fbbf24",
+    34: "#7aa2f7", 35: "#c792ea", 36: "#22d3ee", 37: "#ffffff",
+}
+TOKEN_RE = re.compile(
+    r"\x1b\[([0-9;?]*)([A-Za-z])"            # CSI sequence
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"   # OSC sequence
+    r"|\x1b[()][A-Za-z0-9]"                  # charset selection
+    r"|[\r\n\x07\x08]")
+PARTIAL_ESC_RE = re.compile(r"\x1b(\[[0-9;?]*)?$")
+MAX_LOG_LINES = 8000
+
+
+class LogView(Gtk.ScrolledWindow):
+    """A tiny terminal renderer: colours, carriage returns and line limits."""
+
+    def __init__(self):
+        super().__init__(vexpand=True, hexpand=True)
+        self.add_css_class("ku-logframe")
+        self.set_overflow(Gtk.Overflow.HIDDEN)
+        self.view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True,
+                                 wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self.view.add_css_class("ku-log")
+        self.set_child(self.view)
+        self.buf = self.view.get_buffer()
+        self.end_mark = self.buf.create_mark("end", self.buf.get_end_iter(), False)
+        self.buf.create_tag("bold", weight=Pango.Weight.BOLD)
+        for code, color in ANSI_COLORS.items():
+            self.buf.create_tag(f"fg{code}", foreground=color)
+        self._tags = []
+        self._cr = False
+        self._pending = ""
+        self._scroll_queued = False
+
+    def clear(self):
+        self.buf.set_text("")
+        self._tags, self._cr, self._pending = [], False, ""
+
+    def feed(self, text):
+        text = self._pending + text
+        self._pending = ""
+        partial = PARTIAL_ESC_RE.search(text)
+        if partial:
+            self._pending = text[partial.start():]
+            text = text[:partial.start()]
+
+        pos = 0
+        for m in TOKEN_RE.finditer(text):
+            if m.start() > pos:
+                self._put(text[pos:m.start()])
+            pos = m.end()
+            tok = m.group(0)
+            if tok == "\n":
+                self._cr = False
+                self.buf.insert(self.buf.get_end_iter(), "\n")
+            elif tok == "\r":
+                self._cr = True
+            elif m.group(2) == "m":
+                self._sgr(m.group(1))
+        if pos < len(text):
+            self._put(text[pos:])
+
+        if self.buf.get_line_count() > MAX_LOG_LINES:
+            start = self.buf.get_start_iter()
+            cut = self.buf.get_iter_at_line(self.buf.get_line_count() - MAX_LOG_LINES + 500)[1]
+            self.buf.delete(start, cut)
+        if not self._scroll_queued:
+            self._scroll_queued = True
+            GLib.idle_add(self._scroll_to_end)
+
+    def _put(self, text):
+        end = self.buf.get_end_iter()
+        if self._cr:  # a lone carriage return rewrites the current line (progress bars)
+            self._cr = False
+            start = self.buf.get_iter_at_line(end.get_line())[1]
+            self.buf.delete(start, end)
+            end = self.buf.get_end_iter()
+        if self._tags:
+            self.buf.insert_with_tags_by_name(end, text, *self._tags)
+        else:
+            self.buf.insert(end, text)
+
+    def _sgr(self, params):
+        for code in (int(p) if p.isdigit() else 0 for p in (params or "0").split(";")):
+            if code == 0:
+                self._tags = []
+            elif code == 1:
+                if "bold" not in self._tags:
+                    self._tags.append("bold")
+            elif code == 39:
+                self._tags = [t for t in self._tags if not t.startswith("fg")]
+            else:
+                base = code - 60 if 90 <= code <= 97 else code
+                if base in ANSI_COLORS:
+                    self._tags = [t for t in self._tags if not t.startswith("fg")] + [f"fg{base}"]
+
+    def _scroll_to_end(self):
+        self._scroll_queued = False
+        self.buf.move_mark(self.end_mark, self.buf.get_end_iter())
+        self.view.scroll_mark_onscreen(self.end_mark)
+        return GLib.SOURCE_REMOVE
+
+
+class Runner:
+    """Runs a command on its own pseudo terminal and reports output and exit."""
+
+    def __init__(self, on_output, on_exit, on_echo):
+        self.on_output, self.on_exit, self.on_echo = on_output, on_exit, on_echo
+        self.proc = None
+        self.master = -1
+        self._decoder = None
+        self._echo = True
+        self._interrupts = 0
+
+    @property
+    def running(self):
+        return self.proc is not None
+
+    def start(self, argv, env):
+        master, slave = os.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 110, 0, 0))
+        self.proc = subprocess.Popen(
+            argv, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True,
+            start_new_session=True,
+            preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+        os.close(slave)
+        os.set_blocking(master, False)
+        self.master = master
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._echo = True
+        self._interrupts = 0
+        GLib.unix_fd_add_full(GLib.PRIORITY_DEFAULT, master,
+                              GLib.IOCondition.IN | GLib.IOCondition.HUP, self._on_io)
+        GLib.timeout_add(250, self._poll)
+
+    def _read(self):
+        try:
+            data = os.read(self.master, 65536)
+        except BlockingIOError:
+            return True
+        except OSError:
+            return False
+        if not data:
+            return False
+        self.on_output(self._decoder.decode(data))
+        return True
+
+    def _on_io(self, _fd, _cond):
+        if self.master < 0:
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE if self._read() else GLib.SOURCE_REMOVE
+
+    def _poll(self):
+        if self.proc is None:
+            return GLib.SOURCE_REMOVE
+        code = self.proc.poll()
+        if code is None:
+            try:  # programs asking for a password switch the terminal echo off
+                echo = bool(termios.tcgetattr(self.master)[3] & termios.ECHO)
+            except termios.error:
+                echo = True
+            if echo != self._echo:
+                self._echo = echo
+                self.on_echo(echo)
+            return GLib.SOURCE_CONTINUE
+        while self._read():
+            pass
+        os.close(self.master)
+        self.master, self.proc = -1, None
+        self.on_echo(True)
+        self.on_exit(code)
+        return GLib.SOURCE_REMOVE
+
+    def send_line(self, text):
+        if self.running:
+            os.write(self.master, (text + "\n").encode())
+
+    def interrupt(self):
+        """First Ctrl+C through the terminal (also reaches sudo children), then SIGTERM."""
+        if not self.running:
+            return
+        self._interrupts += 1
+        try:
+            if self._interrupts == 1:
+                os.write(self.master, b"\x03")
+            else:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+class MainWindow(Adw.ApplicationWindow):
+    def __init__(self, app, script, resume_args):
+        super().__init__(application=app, title="Kernel Upgrade",
+                         default_width=980, default_height=760)
+        self.set_icon_name("kernel_upgrade")
+        self.script = script
+        self.status = {}
+        self.releases = []
+        self.latest_stable = None
+        self.version_values = []
+        self.task_title = ""
+        self.task_done_cb = None
+        self._marker_tail = ""
+        self._mok_pending = False
+        self.busy_widgets = []
+        self.runner = Runner(self._on_output, self._on_exit, self._on_echo)
+
+        self.toasts = Adw.ToastOverlay()
+        self.set_content(self.toasts)
+        toolbar = Adw.ToolbarView()
+        self.toasts.set_child(toolbar)
+
+        self.stack = Adw.ViewStack()
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text=T("Aktualisieren", "Refresh"))
+        refresh.connect("clicked", lambda *_: self.refresh())
+        header.pack_start(refresh)
+        self.spinner = Gtk.Spinner()
+        header.pack_start(self.spinner)
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=self._build_menu(),
+                                       tooltip_text=T("Menü", "Menu")))
+        toolbar.add_top_bar(header)
+
+        self.banner = Adw.Banner(revealed=False)
+        self.banner.connect("button-clicked", self._on_banner_clicked)
+        toolbar.add_top_bar(self.banner)
+        toolbar.set_content(self.stack)
+
+        self.stack.add_titled_with_icon(self._build_upgrade_page(), "upgrade", "Upgrade",
+                                        "software-update-available-symbolic")
+        self.stack.add_titled_with_icon(self._build_kernels_page(), "kernels", "Kernel",
+                                        "drive-harddisk-symbolic")
+        self.stack.add_titled_with_icon(self._build_log_page(), "log", T("Protokoll", "Log"),
+                                        "utilities-terminal-symbolic")
+
+        self._add_actions()
+        self.connect("close-request", self._on_close_request)
+        self.refresh()
+        self._fetch_releases()
+        if resume_args:
+            GLib.idle_add(self._start_resume, resume_args)
+
+    # ------------------------------------------------------------------ menu
+    def _build_menu(self):
+        menu = Gio.Menu()
+        tools = Gio.Menu()
+        tools.append(T("Skript && GUI systemweit installieren", "Install script && GUI system-wide"), "win.install-system")
+        tools.append(T("Nach Skript-Update suchen", "Check for script update"), "win.check-update")
+        tools.append(T("Autosign-Hook entfernen", "Remove autosign hook"), "win.uninstall-autosign")
+        menu.append_section(None, tools)
+        about = Gio.Menu()
+        about.append(T("Projektseite öffnen", "Open project page"), "win.homepage")
+        about.append(T("Info zu Kernel Upgrade", "About Kernel Upgrade"), "win.about")
+        menu.append_section(None, about)
+        return menu
+
+    def _add_actions(self):
+        actions = {
+            "install-system": lambda *_: self.run_task(T("Systemweite Installation", "System-wide installation"),
+                                                       ["--install-system", "--yes"]),
+            "check-update": lambda *_: self.run_task(T("Update-Prüfung", "Update check"), ["--update"]),
+            "uninstall-autosign": lambda *_: self.run_task(T("Autosign-Hook entfernen", "Remove autosign hook"),
+                                                           ["--uninstallautosign"]),
+            "homepage": lambda *_: Gtk.UriLauncher.new(PROJECT_URL).launch(self, None, None),
+            "about": self._show_about,
+        }
+        for name, callback in actions.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", callback)
+            self.add_action(action)
+
+    def _show_about(self, *_):
+        Adw.AboutDialog(
+            application_name="Kernel Upgrade",
+            application_icon="kernel_upgrade",
+            version=self.status.get("script_version", ""),
+            developer_name="SoulInfernoDE",
+            website=PROJECT_URL,
+            issue_url=PROJECT_URL + "/issues",
+            license_type=Gtk.License.MIT_X11,
+            comments=T("Mainline-Kernel kompilieren, installieren und für Secure Boot signieren.",
+                       "Compile, install and Secure Boot sign mainline Linux kernels."),
+        ).present(self)
+
+    # --------------------------------------------------------- upgrade page
+    def _build_upgrade_page(self):
+        page = Adw.PreferencesPage()
+
+        hero_group = Adw.PreferencesGroup()
+        hero = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=22)
+        hero.add_css_class("ku-hero")
+        icon = Gtk.Image(icon_name="kernel_upgrade", pixel_size=96, valign=Gtk.Align.CENTER)
+        hero.append(icon)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, hexpand=True, valign=Gtk.Align.CENTER)
+        caption = Gtk.Label(label=T("Laufender Kernel", "Running kernel"), xalign=0)
+        caption.add_css_class("ku-dim")
+        self.hero_kernel = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.hero_kernel.add_css_class("ku-kernel")
+        self.hero_chips = Gtk.Box(spacing=8)
+        self.hero_latest = Gtk.Label(xalign=0, wrap=True)
+        self.hero_latest.add_css_class("ku-dim")
+        for widget in (caption, self.hero_kernel, self.hero_chips, self.hero_latest):
+            text.append(widget)
+        hero.append(text)
+        self.go_button = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.go_button.add_css_class("pill")
+        self.go_button.add_css_class("ku-go")
+        self.go_button.connect("clicked", self._on_build_clicked)
+        self.busy_widgets.append(self.go_button)
+        hero.append(self.go_button)
+        hero_group.add(hero)
+        page.add(hero_group)
+
+        target = Adw.PreferencesGroup(title=T("Zielversion", "Target version"))
+        self.version_row = Adw.ComboRow(title=T("Kernel-Version", "Kernel version"),
+                                        subtitle=T("Lade Versionen von kernel.org …", "Loading versions from kernel.org …"))
+        self.version_row.connect("notify::selected", lambda *_: self._update_hero())
+        self.custom_row = Adw.EntryRow(title=T("Eigene Version, z. B. 6.12.1", "Custom version, e.g. 6.12.1"), visible=False)
+        self.custom_row.connect("changed", lambda *_: self._update_hero())
+        target.add(self.version_row)
+        target.add(self.custom_row)
+        page.add(target)
+
+        opts = Adw.PreferencesGroup(title=T("Optionen", "Options"))
+        self.reboot_row = Adw.SwitchRow(
+            title=T("Sicherheits-Neustart mit Bereinigung", "Safety reboot with cleanup"),
+            subtitle=T("Startet einmalig in den Distributions-Kernel, entfernt alle alten Custom-Kernel und baut danach automatisch weiter.",
+                       "Reboots once into the distribution kernel, removes all old custom kernels and continues the build automatically."),
+            active=True)
+        self.reboot_row.connect("notify::active", lambda *_: self._sync_options())
+        self.purge_row = Adw.SwitchRow(
+            title=T("Alte Custom-Kernel entfernen", "Remove old custom kernels"),
+            subtitle=T("Löscht frühere Eigenbau-Kernel samt Modulen, Headern und Build-Resten.",
+                       "Deletes earlier self-built kernels including modules, headers and build leftovers."))
+        self.autosign_row = Adw.SwitchRow(
+            title=T("Autosign-Hook installieren", "Install autosign hook"),
+            subtitle=T("Signiert künftig jeden neu installierten Kernel automatisch.",
+                       "Automatically signs every newly installed kernel from now on."),
+            active=True)
+        self.dbg_row = Adw.SwitchRow(
+            title=T("Debug-Paket installieren", "Install debug package"),
+            subtitle=T("Mehrere GB groß - nur für Kernel-Debugging nötig.", "Several GB - only needed for kernel debugging."))
+        self.keep_row = Adw.SwitchRow(
+            title=T("Quellbaum behalten", "Keep source tree"),
+            subtitle=T("Sonst wird er nach erfolgreichem Build gelöscht (spart bis zu 40 GB).",
+                       "Otherwise it is deleted after a successful build (saves up to 40 GB)."))
+        self.jobs_row = Adw.SpinRow.new_with_range(1, os.cpu_count() or 1, 1)
+        self.jobs_row.set_title(T("Parallele Build-Jobs", "Parallel build jobs"))
+        self.jobs_row.set_value(os.cpu_count() or 1)
+        for row in (self.reboot_row, self.purge_row, self.autosign_row, self.dbg_row, self.keep_row, self.jobs_row):
+            opts.add(row)
+        page.add(opts)
+
+        system = Adw.PreferencesGroup(title="System")
+        self.sb_row = self._status_row(system, "Secure Boot", "security-high-symbolic")
+        self.mok_row = self._status_row(system, T("MOK-Schlüssel", "MOK key"), "dialog-password-symbolic")
+        self.hook_row = self._status_row(system, T("Autosign-Hook", "Autosign hook"), "emblem-system-symbolic")
+        self.hook_button = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.hook_button.add_css_class("flat")
+        self.hook_button.connect("clicked", lambda *_: self.run_task(
+            T("Autosign-Hook installieren", "Install autosign hook"), ["--installautosign", "--yes"]))
+        self.hook_row.add_suffix(self.hook_button)
+        self.busy_widgets.append(self.hook_button)
+        self.disk_row = self._status_row(system, T("Freier Speicher", "Free disk space"), "drive-harddisk-symbolic")
+        self.libc_row = self._status_row(system, "linux-libc-dev", "dialog-warning-symbolic")
+        page.add(system)
+        return page
+
+    @staticmethod
+    def _status_row(group, title, icon):
+        row = Adw.ActionRow(title=title)
+        row.add_prefix(Gtk.Image(icon_name=icon))
+        row.value = Gtk.Label(valign=Gtk.Align.CENTER)
+        row.add_suffix(row.value)
+        group.add(row)
+        return row
+
+    @staticmethod
+    def _set_status(row, text, level=None, subtitle=""):
+        row.value.set_label(text)
+        for cls in ("success", "warning", "error", "dim-label"):
+            row.value.remove_css_class(cls)
+        row.value.add_css_class(level or "dim-label")
+        row.set_subtitle(subtitle)
+
+    # --------------------------------------------------------- kernels page
+    def _build_kernels_page(self):
+        page = Adw.PreferencesPage()
+        self.kernel_group = Adw.PreferencesGroup(
+            title=T("Installierte Kernel", "Installed kernels"),
+            description=T("Distributions-Kernel werden von dieser App nie verändert.",
+                          "Distribution kernels are never modified by this app."))
+        cleanup = Gtk.Button(label=T("Alles bereinigen", "Clean up everything"), valign=Gtk.Align.CENTER,
+                             tooltip_text=T("Entfernt alle Custom-Kernel außer dem laufenden sowie sämtliche Reste",
+                                            "Removes all custom kernels except the running one and all leftovers"))
+        cleanup.connect("clicked", self._on_cleanup_clicked)
+        self.busy_widgets.append(cleanup)
+        self.kernel_group.set_header_suffix(cleanup)
+        page.add(self.kernel_group)
+        self.leftover_group = Adw.PreferencesGroup(
+            title=T("Reste ohne Kernel", "Leftovers without a kernel"),
+            description=T("Verwaiste Modul-, Header- oder Debug-Verzeichnisse früherer Builds.",
+                          "Orphaned module, header or debug directories of earlier builds."))
+        page.add(self.leftover_group)
+        self._kernel_rows = []
+        return page
+
+    def _rebuild_kernel_rows(self):
+        for group, row in self._kernel_rows:
+            group.remove(row)
+        self._kernel_rows = []
+
+        for kernel in self.status.get("kernels", []):
+            version = kernel["version"]
+            kind = T("Custom-Build", "Custom build") if kernel["custom"] else T("Distribution", "Distribution")
+            row = Adw.ActionRow(title=version, subtitle=kind + (T(" · aktiv", " · running") if kernel["running"] else ""))
+            row.add_prefix(Gtk.Image(icon_name="emblem-ok-symbolic" if kernel["running"] else "application-x-firmware-symbolic"))
+            if kernel["custom"]:
+                sign = self._row_button("document-edit-symbolic", T("Mit MOK signieren", "Sign with MOK"))
+                sign.connect("clicked", lambda _b, v=version: self.run_task(
+                    T(f"Signiere {v}", f"Signing {v}"), ["--signonly", v, "--yes"]))
+                row.add_suffix(sign)
+                if not kernel["running"]:
+                    remove = self._row_button("user-trash-symbolic", T("Entfernen", "Remove"))
+                    remove.add_css_class("error")
+                    remove.connect("clicked", lambda _b, v=version: self._confirm_remove(v))
+                    row.add_suffix(remove)
+            self.kernel_group.add(row)
+            self._kernel_rows.append((self.kernel_group, row))
+
+        leftovers = self.status.get("leftovers", [])
+        self.leftover_group.set_visible(bool(leftovers))
+        for version in leftovers:
+            row = Adw.ActionRow(title=version, subtitle=T("Kein Kernel-Image mehr vorhanden", "No kernel image present any more"))
+            row.add_prefix(Gtk.Image(icon_name="dialog-warning-symbolic"))
+            remove = self._row_button("user-trash-symbolic", T("Entfernen", "Remove"))
+            remove.connect("clicked", lambda _b, v=version: self.run_task(
+                T(f"Entferne Reste von {v}", f"Removing leftovers of {v}"), ["--remove", v]))
+            row.add_suffix(remove)
+            self.leftover_group.add(row)
+            self._kernel_rows.append((self.leftover_group, row))
+
+    def _row_button(self, icon, tooltip):
+        button = Gtk.Button(icon_name=icon, tooltip_text=tooltip, valign=Gtk.Align.CENTER)
+        button.add_css_class("flat")
+        button.set_sensitive(not self.runner.running)
+        self.busy_widgets.append(button)
+        return button
+
+    # ------------------------------------------------------------- log page
+    def _build_log_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                      margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        top = Gtk.Box(spacing=12)
+        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, hexpand=True)
+        self.stage_label = Gtk.Label(label=T("Bereit", "Ready"), xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.stage_label.add_css_class("title-4")
+        self.progress = Gtk.ProgressBar()
+        labels.append(self.stage_label)
+        labels.append(self.progress)
+        top.append(labels)
+        self.cancel_button = Gtk.Button(label=T("Abbrechen", "Cancel"), valign=Gtk.Align.CENTER, sensitive=False)
+        self.cancel_button.add_css_class("destructive-action")
+        self.cancel_button.connect("clicked", lambda *_: self.runner.interrupt())
+        top.append(self.cancel_button)
+        box.append(top)
+
+        self.log = LogView()
+        box.append(self.log)
+
+        bottom = Gtk.Box(spacing=8)
+        self.input = Gtk.Entry(hexpand=True, sensitive=False)
+        self.input.connect("activate", self._on_send)
+        self.send_button = Gtk.Button(label=T("Senden", "Send"), sensitive=False)
+        self.send_button.connect("clicked", self._on_send)
+        bottom.append(self.input)
+        bottom.append(self.send_button)
+        box.append(bottom)
+        self._on_echo(True)
+        return box
+
+    def _on_send(self, *_):
+        self.runner.send_line(self.input.get_text())
+        self.input.set_text("")
+
+    def _on_echo(self, echo):
+        """Echo off means a program (sudo, mokutil) is waiting for a password."""
+        self.input.set_visibility(echo)
+        if echo:
+            self.input.remove_css_class("ku-password")
+            self.input.set_placeholder_text(T("Eingabe an das Skript senden …", "Send input to the script …"))
+        else:
+            self.input.add_css_class("ku-password")
+            self.input.set_placeholder_text(T("Passwort eingeben und Enter drücken", "Enter password and press Enter"))
+            self.stack.set_visible_child_name("log")
+            self.input.grab_focus()
+            self.present()
+
+    # ------------------------------------------------------------ data flow
+    def refresh(self):
+        try:
+            out = subprocess.run([self.script, "--status-json"], capture_output=True, text=True, timeout=30).stdout
+            self.status = json.loads(out)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            self.toast(T(f"Status konnte nicht gelesen werden: {exc}", f"Could not read status: {exc}"))
+            return
+        st = self.status
+
+        sb = st.get("secure_boot")
+        self._set_status(self.sb_row, *{
+            "enabled": (T("Aktiv", "Enabled"), "success"),
+            "disabled": (T("Deaktiviert", "Disabled"), None),
+            "unsupported": (T("Kein UEFI", "No UEFI"), None),
+        }.get(sb, (T("Unbekannt", "Unknown"), None)))
+        self._set_status(self.mok_row, *{
+            "enrolled": (T("Registriert", "Enrolled"), "success"),
+            "pending": (T("Registrierung ausstehend", "Enrollment pending"), "warning"),
+            "present": (T("Vorhanden, nicht registriert", "Present, not enrolled"), "warning"),
+        }.get(st.get("mok"), (T("Nicht vorhanden", "Missing"), "warning" if sb == "enabled" else None)))
+        hook = st.get("autosign")
+        self._set_status(self.hook_row, *{
+            "current": (T("Installiert", "Installed"), "success"),
+            "outdated": (T("Veraltet", "Outdated"), "warning"),
+        }.get(hook, (T("Nicht installiert", "Not installed"), None)))
+        self.hook_button.set_visible(hook != "current")
+        self.hook_button.set_label(T("Aktualisieren", "Update") if hook == "outdated" else T("Installieren", "Install"))
+        self.autosign_row.set_visible(hook == "none" and sb != "unsupported")
+        free = st.get("free_gb", 0)
+        self._set_status(self.disk_row, f"{free} GB", "warning" if free < 45 else "success", st.get("work_dir", ""))
+        self.libc_row.set_visible(bool(st.get("libc_dev_custom")))
+        self._set_status(self.libc_row, T("Aus Custom-Build", "From custom build"), "warning",
+                         T("Wird bei der Bereinigung auf die Distributions-Version zurückgesetzt.",
+                           "Will be restored to the distribution version during cleanup."))
+
+        self.reboot_row.set_visible(bool(st.get("running_custom")))
+        self.jobs_row.set_range(1, st.get("cores", 1))
+        self._sync_options()
+        self._rebuild_kernel_rows()
+        self._update_hero()
+        self._update_banner()
+
+    def _sync_options(self):
+        rebooting = self.reboot_row.get_visible() and self.reboot_row.get_active()
+        self.purge_row.set_sensitive(not rebooting)
+        if rebooting:
+            self.purge_row.set_active(True)
+
+    def _update_banner(self):
+        if self._mok_pending or self.status.get("mok") == "pending":
+            self.banner.set_title(T("Beim nächsten Neustart im blauen MOK-Manager „Enroll MOK“ wählen und das Einmal-Passwort eingeben.",
+                                    "On the next reboot choose “Enroll MOK” in the blue MOK manager and enter the one-time password."))
+            self.banner.set_button_label(None)
+            self.banner.set_revealed(True)
+        elif self.status.get("pending_resume") and not self.runner.running:
+            self.banner.set_title(T("Ein abgebrochener Neustart-Vorgang ist noch scharf (Autostart-Eintrag und GRUB-Einmalstart).",
+                                    "An aborted reboot sequence is still armed (autostart entry and one-time GRUB boot)."))
+            self.banner.set_button_label(T("Jetzt bereinigen", "Clean up now"))
+            self.banner.set_revealed(True)
+        else:
+            self.banner.set_revealed(False)
+
+    def _on_banner_clicked(self, *_):
+        self._on_cleanup_clicked()
+
+    def _fetch_releases(self):
+        def worker():
+            # right after login the network may not be up yet: retry for up to a minute
+            data, deadline, announced = None, time.monotonic() + NET_WAIT, False
+            while data is None:
+                try:
+                    with urllib.request.urlopen(RELEASES_URL, timeout=10) as resp:
+                        data = json.load(resp)
+                except (OSError, ValueError):
+                    if time.monotonic() >= deadline:
+                        break
+                    if not announced:
+                        announced = True
+                        GLib.idle_add(self.version_row.set_subtitle,
+                                      T("Warte auf Netzwerkverbindung …", "Waiting for network connection …"))
+                    time.sleep(3)
+            GLib.idle_add(self._set_releases, data)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_releases(self, data):
+        labels, self.version_values = [], []
+        if data:
+            self.latest_stable = data.get("latest_stable", {}).get("version")
+            self.releases = [r for r in data.get("releases", [])
+                             if r.get("moniker") in ("stable", "longterm", "mainline")]
+            self.releases.sort(key=lambda r: r["version"] != self.latest_stable)
+            for rel in self.releases:
+                extra = " · EOL" if rel.get("iseol") else ""
+                labels.append(f"{rel['version']}   ·   {rel['moniker']}{extra}")
+                self.version_values.append(rel["version"])
+            self.version_row.set_subtitle("kernel.org")
+        else:
+            labels.append(T("Neueste stabile Version (automatisch)", "Latest stable version (automatic)"))
+            self.version_values.append("stable")
+            self.version_row.set_subtitle(T("kernel.org nicht erreichbar", "kernel.org not reachable"))
+        labels.append(T("Eigene Version …", "Custom version …"))
+        self.version_values.append(None)
+        self.version_row.set_model(Gtk.StringList.new(labels))
+        self.version_row.set_selected(0)
+        self._update_hero()
+        return GLib.SOURCE_REMOVE
+
+    def selected_version(self):
+        idx = self.version_row.get_selected()
+        if not self.version_values or idx >= len(self.version_values):
+            return None
+        value = self.version_values[idx]
+        self.custom_row.set_visible(value is None)
+        return self.custom_row.get_text().strip() if value is None else value
+
+    def _installed(self, version):
+        release = expected_release(version, self.status.get("localversion", "-waydroid"))
+        return any(k["version"] == release for k in self.status.get("kernels", []))
+
+    def _update_hero(self):
+        st = self.status
+        self.hero_kernel.set_label(st.get("running", "?"))
+        child = self.hero_chips.get_first_child()
+        while child:
+            self.hero_chips.remove(child)
+            child = self.hero_chips.get_first_child()
+
+        def chip(text, cls=None):
+            label = Gtk.Label(label=text)
+            label.add_css_class("ku-chip")
+            if cls:
+                label.add_css_class(cls)
+            self.hero_chips.append(label)
+
+        chip(T("Custom-Build", "Custom build") if st.get("running_custom") else T("Distributions-Kernel", "Distribution kernel"))
+        if st.get("secure_boot") == "enabled":
+            chip("Secure Boot", "good")
+        latest = self.latest_stable
+        if latest:
+            if self._installed(latest):
+                chip(T("Aktuell", "Up to date"), "good")
+                self.hero_latest.set_label(T(f"Die neueste stabile Version {latest} ist bereits installiert.",
+                                             f"The latest stable version {latest} is already installed."))
+            else:
+                chip(T("Update verfügbar", "Update available"), "warn")
+                self.hero_latest.set_label(T(f"Neueste stabile Version auf kernel.org: {latest}",
+                                             f"Latest stable version on kernel.org: {latest}"))
+        else:
+            self.hero_latest.set_label("")
+
+        version = self.selected_version()
+        valid = bool(version) and (version == "stable" or re.fullmatch(r"\d+\.\d+(\.\d+)?(-rc\d+)?", version))
+        if not valid:
+            self.go_button.set_label(T("Version wählen", "Choose a version"))
+        elif version != "stable" and self._installed(version):
+            self.go_button.set_label(T(f"{version} neu bauen", f"Rebuild {version}"))
+        elif version == "stable":
+            self.go_button.set_label(T("Bauen & installieren", "Build & install"))
+        else:
+            self.go_button.set_label(T(f"{version} bauen & installieren", f"Build & install {version}"))
+        self._go_valid = bool(valid)
+        self.go_button.set_sensitive(self._go_valid and not self.runner.running)
+
+    # -------------------------------------------------------------- actions
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text, timeout=5))
+
+    def _confirm(self, heading, body, label, callback, destructive=False):
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        dialog.add_response("cancel", T("Abbrechen", "Cancel"))
+        dialog.add_response("ok", label)
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE if destructive
+                                       else Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _d, response: callback() if response == "ok" else None)
+        dialog.present(self)
+
+    def _on_build_clicked(self, *_):
+        version = self.selected_version()
+        args = ["--yes", "--kernelversion", version, "--jobs", str(int(self.jobs_row.get_value()))]
+        if self.dbg_row.get_active():
+            args.append("--with-dbg")
+        if self.keep_row.get_active():
+            args.append("--keep-source")
+        if self.autosign_row.get_visible() and not self.autosign_row.get_active():
+            args.append("--no-autosign")
+        title = T(f"Kernel {version} bauen", f"Building kernel {version}")
+
+        if self.status.get("running_custom") and self.reboot_row.get_active():
+            stock = self.status.get("stock_kernel") or "?"
+            self._confirm(
+                T("Der Rechner wird neu gestartet", "The computer is going to reboot"),
+                T(f"Nach 10 Sekunden Countdown startet das System einmalig in den Distributions-Kernel {stock}. "
+                  "Nach dem Login öffnet sich diese App wieder, entfernt die alten Custom-Kernel und baut weiter.\n\n"
+                  "Bitte vorher alle offenen Dokumente speichern.",
+                  f"After a 10 second countdown the system reboots once into the distribution kernel {stock}. "
+                  "After login this app opens again, removes the old custom kernels and continues the build.\n\n"
+                  "Please save all open documents first."),
+                T("Neu starten & bauen", "Reboot & build"),
+                lambda: self.run_task(title, args), destructive=True)
+            return
+        if self.status.get("running_custom"):
+            args.append("--no-reboot")
+        if self.purge_row.get_active():
+            args.append("--purge-custom")
+        self.run_task(title, args)
+
+    def _on_cleanup_clicked(self, *_):
+        self._confirm(
+            T("Alles bereinigen?", "Clean up everything?"),
+            T("Entfernt alle Custom-Kernel außer dem laufenden, verwaiste Module/Header, alte Build-Reste "
+              "und nimmt einen abgebrochenen Neustart-Vorgang zurück. Distributions-Kernel bleiben unberührt.",
+              "Removes all custom kernels except the running one, orphaned modules/headers, old build leftovers "
+              "and reverts an aborted reboot sequence. Distribution kernels stay untouched."),
+            T("Bereinigen", "Clean up"),
+            lambda: self.run_task(T("Bereinigung", "Cleanup"), ["--cleanup", "--yes"]), destructive=True)
+
+    def _confirm_remove(self, version):
+        self._confirm(
+            T(f"Kernel {version} entfernen?", f"Remove kernel {version}?"),
+            T("Kernel-Image, Module, Header und Debug-Symbole dieser Version werden gelöscht.",
+              "Kernel image, modules, headers and debug symbols of this version will be deleted."),
+            T("Entfernen", "Remove"),
+            lambda: self.run_task(T(f"Entferne {version}", f"Removing {version}"), ["--remove", version]),
+            destructive=True)
+
+    def _start_resume(self, args):
+        self.run_task(T("Fortsetzung nach Neustart", "Resuming after reboot"), args)
+        return GLib.SOURCE_REMOVE
+
+    def run_task(self, title, args):
+        if self.runner.running:
+            self.toast(T("Es läuft bereits ein Vorgang.", "A task is already running."))
+            self.stack.set_visible_child_name("log")
+            return
+        self.task_title = title
+        self._marker_tail = ""
+        self.log.clear()
+        self.log.feed(f"\x1b[1;36m$ kernel_upgrade {' '.join(args)}\x1b[0m\n")
+        self.stage_label.set_label(title)
+        self.progress.set_fraction(0)
+        self.stack.set_visible_child_name("log")
+        self._set_busy(True)
+        env = dict(os.environ, KU_GUI="1", TERM="xterm-256color")
+        try:
+            self.runner.start([self.script, *args], env)
+        except OSError as exc:
+            self._set_busy(False)
+            self.toast(str(exc))
+
+    def _set_busy(self, busy):
+        self.spinner.set_spinning(busy)
+        self.cancel_button.set_sensitive(busy)
+        self.input.set_sensitive(busy)
+        self.send_button.set_sensitive(busy)
+        self.busy_widgets = [w for w in self.busy_widgets if w.get_root() is not None or w is self.go_button]
+        for widget in self.busy_widgets:
+            widget.set_sensitive(not busy)
+        if not busy:
+            self.go_button.set_sensitive(getattr(self, "_go_valid", False))
+
+    def _on_output(self, text):
+        text = self._marker_tail + text
+        self._marker_tail = ""
+        while True:
+            start = text.find("@@KU@@")
+            if start < 0:
+                break
+            end = text.find("\n", start)
+            if end < 0:
+                self._marker_tail = text[start:]
+                text = text[:start]
+                break
+            self._on_marker(text[start + 6:end].strip())
+            text = text[:start] + text[end + 1:]
+        if text:
+            self.log.feed(text)
+
+    def _on_marker(self, marker):
+        kind, _, rest = marker.partition(" ")
+        if kind == "stage":
+            try:
+                num, total, title = rest.split(" ", 2)
+                self.progress.set_fraction((int(num) - 1) / int(total))
+                self.stage_label.set_label(T(f"Schritt {num}/{total} · {title}", f"Step {num}/{total} · {title}"))
+            except ValueError:
+                pass
+        elif kind == "reboot":
+            self.stage_label.set_label(T("Neustart steht bevor …", "Reboot imminent …"))
+        elif kind == "mok-pending":
+            self._mok_pending = True
+
+    def _on_exit(self, code):
+        self._set_busy(False)
+        if code == 0:
+            self.progress.set_fraction(1)
+            message = T(f"{self.task_title}: abgeschlossen", f"{self.task_title}: finished")
+        else:
+            message = T(f"{self.task_title}: fehlgeschlagen oder abgebrochen (Code {code})",
+                        f"{self.task_title}: failed or cancelled (code {code})")
+        self.stage_label.set_label(message)
+        self.toast(message)
+        if not self.is_active():
+            note = Gio.Notification.new("Kernel Upgrade")
+            note.set_body(message)
+            self.get_application().send_notification("task", note)
+        self.refresh()
+
+    def _on_close_request(self, *_):
+        if not self.runner.running:
+            return False
+        self._confirm(
+            T("Vorgang läuft noch", "A task is still running"),
+            T("Beim Schließen wird der laufende Vorgang abgebrochen.", "Closing will cancel the running task."),
+            T("Abbrechen & schließen", "Cancel task & close"), self._force_close, destructive=True)
+        return True
+
+    def _force_close(self):
+        self.runner.interrupt()
+        self.runner.interrupt()
+        self.destroy()
+
+
+class KernelUpgradeApp(Adw.Application):
+    def __init__(self, resume_args):
+        super().__init__(application_id=APP_ID)
+        self.resume_args = resume_args
+        GLib.set_application_name("Kernel Upgrade")
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        provider = Gtk.CssProvider()
+        provider.load_from_string(CSS)
+        display = Gdk.Display.get_default()
+        Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        assets = os.path.join(HERE, "assets")
+        if os.path.isdir(assets):  # running straight from the repository
+            Gtk.IconTheme.get_for_display(display).add_search_path(assets)
+
+    def do_activate(self):
+        window = self.props.active_window
+        if window is None:
+            script = find_script()
+            if script is None:
+                dialog = Adw.AlertDialog(
+                    heading=T("kernel_upgrade nicht gefunden", "kernel_upgrade not found"),
+                    body=T("Das Skript muss im selben Ordner wie die GUI oder im PATH liegen.",
+                           "The script must be in the same folder as the GUI or in your PATH."))
+                dialog.add_response("ok", "OK")
+                placeholder = Adw.ApplicationWindow(application=self, default_width=420, default_height=160)
+                dialog.connect("response", lambda *_: placeholder.destroy())
+                placeholder.present()
+                dialog.present(placeholder)
+                return
+            window = MainWindow(self, script, self.resume_args)
+        window.present()
+
+
+def main():
+    resume_args = []
+    if "--resume" in sys.argv:
+        rest = sys.argv[sys.argv.index("--resume") + 1:]
+        resume_args = rest[1:] if rest[:1] == ["--"] else rest
+    return KernelUpgradeApp(resume_args).run(sys.argv[:1])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

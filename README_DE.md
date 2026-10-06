@@ -1,86 +1,102 @@
-# Kernel Upgrade Script (v3.5)
+<p align="center"><img src="assets/kernel_upgrade.png" width="128" alt="Kernel Upgrade"></p>
+
+# Kernel Upgrade (v4.1)
 
 [🇺🇸 Switch to English version](README.md)
 
-Ein vollautomatisches Bash-Skript zum Kompilieren, Installieren und Signieren eines aktuellen Mainline-Linux-Kernels. Dieses Skript wurde optimiert, um moderne Kernel-Features nahtlos zu integrieren, alte Kernel-Reste zu entfernen und Sicherheitsstandards (UEFI Secure Boot Signierung) fehlerfrei zu handhaben.
+Ein vollautomatisches Bash-Skript mit grafischer Oberfläche zum Kompilieren, Installieren und Signieren eines aktuellen Mainline-Linux-Kernels. Es integriert die für Waydroid nötigen Kernel-Features, entfernt alte Kernel-Reste und kümmert sich um die UEFI-Secure-Boot-Signierung.
+
+![Kernel Upgrade GUI](assets/screenshot.png)
 
 ## 🚀 Features
 
-- **🌐 OTA Auto-Updater:** Prüft bei jedem Start direkt das GitHub-Repository. Wird eine neuere Version gefunden, überschreibt sich das Skript selbst und setzt deinen Befehl ohne Unterbrechung fort (funktioniert auch direkt bei Optionen wie `-h`).
+- **🖥️ Grafische Oberfläche (`kernel_upgrade_gui`):** GTK4/libadwaita-App mit Versionsauswahl von kernel.org, Systemstatus (Secure Boot, MOK, Autosign), Kernel-Verwaltung und Live-Protokoll samt Fortschritt. Passwortabfragen (sudo, MOK) erscheinen direkt in der App.
 
-- **📦 Systemweite Integration (`--install-system`):** Kopiert das Skript nach `~/.scripts`, trägt den Pfad in deine `~/.bashrc` ein und aktiviert die native Tab-Vervollständigung im Terminal.
+- **🌐 OTA Auto-Updater:** Prüft bei jedem Start das GitHub-Repository. Eine neuere Version wird heruntergeladen, auf Gültigkeit geprüft, atomar ausgetauscht und dein Befehl ohne Unterbrechung fortgesetzt. Es wird nie auf eine ältere Version zurückgestuft.
 
-- **Vollautomatisch:** Lädt den neuesten stabilen Kernel von `kernel.org`, konfiguriert, baut und installiert ihn.
+- **📦 Systemweite Integration (`--install-system`):** Installiert Skript und GUI nach `~/.scripts`, trägt den Pfad in `~/.bashrc` ein, legt einen Eintrag im Anwendungsmenü samt Icon an und aktiviert die Tab-Vervollständigung.
 
-- **Waydroid Ready:** Integriert automatisch `.config`-Fragmente für **Binder** und **memfd** (erforderlich für moderne Waydroid/Android-Container, ersetzt das veraltete ashmem).
+- **Vollautomatisch:** Lädt den gewünschten Kernel von `kernel.org` (stable, longterm, mainline oder feste Version), prüft die SHA256-Prüfsumme, konfiguriert, baut und installiert ihn.
 
-- **Secure Boot & DKMS Support:** Automatisierte MOK (Machine Owner Key) Generierung und Signierung der Kernel-Images (`sbsign`). Hinterlegt die Schlüssel zeitgleich als PEM und binäres DER-Format, um SSL/ASN1-Parsing-Fehler bei Drittanbieter-Modulen (z. B. DisplayLink `evdi` via `kmodsign`) zu verhindern.
+- **Waydroid Ready:** Integriert automatisch ein `.config`-Fragment für **Binder/BinderFS** und **NTSYNC**. Ein eigenes Fragment kann unter `~/.config/kernel_upgrade/config-fragment` abgelegt werden.
 
-- **🔄 Intelligente Versionsprüfung:** Erkennt, ob der Ziel-Kernel bereits läuft oder installiert ist. Statt redundante Builds zu starten, schlägt das Skript interaktiv die Top 3 der alternativen stabilen Kernel-Releases vor.
+- **Secure Boot & DKMS Support:** Automatisierte MOK-Generierung (Machine Owner Key), Registrierungsprüfung und Signierung der Kernel-Images (`sbsign`). Die Schlüssel liegen als PEM und DER unter `/var/lib/shim-signed/mok/`, sodass auch DKMS-Module (z. B. DisplayLink `evdi`) signiert werden.
 
-- **🧹 Automatisierte Bereinigung (`--purge-custom`):** Entfernt alte `-waydroid` Kernel-Reste, Header und Debug-Symbole restlos. Über einen cleveren `grub-reboot`-Hook startet das System dafür einmalig temporär in den offiziellen Distributions-Kernel, bereinigt alle Altlasten und setzt den Prozess nach dem Reboot fort.
-- **Autosign-Integration:** Installiert ein Post-Install-Skript, das zukünftige Kernel-Updates automatisch signiert.
+- **🔄 Intelligente Versionsprüfung:** Erkennt, ob der Ziel-Kernel bereits läuft oder installiert ist, und schlägt Alternativen vor. Bereits gebaute Pakete werden wiederverwendet statt neu kompiliert.
+
+- **🧹 Saubere Bereinigung (`--purge-custom`, `--cleanup`):** Eigene Kernel werden zuverlässig am Paket-Ursprung erkannt, nicht am Namen. Entfernt werden Pakete, Module, Header, Debug-Symbole, verwaiste Verzeichnisse und alte Build-Reste. Distributions-Kernel werden nie angefasst.
+
+- **🔁 Sicherheits-Neustart:** Läuft ein Custom-Kernel, startet das System einmalig per `grub-reboot` in den Distributions-Kernel, bereinigt und setzt den Build nach dem Login automatisch fort (im Terminal oder in der GUI). Ein Abbruch im Countdown nimmt alles wieder zurück. Mit `--no-reboot` lässt sich der Neustart überspringen.
+
+- **Autosign-Integration:** Installiert einen Post-Install-Hook, der zukünftige Kernel automatisch signiert.
+
 - **Mehrsprachig:** Erkennt automatisch die Systemsprache (Deutsch/Englisch).
-
 
 ## 🛠 Voraussetzungen
 
-Das Skript installiert notwendige Abhängigkeiten automatisch via `apt`. Grundsätzlich werden benötigt:
-- Ein Debian-basiertes System (Ubuntu, Linux Mint, Debian, etc.)
-- Internetverbindung
-- Root-Rechte (via `sudo`)
+- Ein Debian-basiertes System (Ubuntu, Linux Mint, Debian, …) mit GRUB
+- Internetverbindung und Root-Rechte (via `sudo`) – das Skript selbst **nicht** mit `sudo` starten
+- Rund 45 GB freier Speicher für den Build
+- Für die GUI: GTK 4 und libadwaita ≥ 1.5 (Ubuntu 24.04, Linux Mint 22, Debian 13 oder neuer)
 
+Build-Abhängigkeiten installiert das Skript automatisch via `apt`.
 
 ## 📦 Installation & Nutzung
 
-1. **Skript vorbereiten:**
-   Speichere/Downloade den Code des Skripts als `kernel_upgrade`.
-
-2. **Ausführbar machen:**
-   ```bash
-   chmod +x kernel_upgrade
-
-3. **Systemweit installieren (Empfohlen):**
-   ```bash
-   ./kernel_upgrade --install-system && source ~/.bashrc
-
-Ab jetzt kannst du das Skript von jedem beliebigen Verzeichnis aus mit dem Befehl kernel_upgrade im Terminal samt Autovervollständigung aufrufen!
-
-
-⚙️ Parameter & Optionen
 ```bash
-Option                  Beschreibung
--h, --help              Zeigt diese Hilfe-Seite an.
---version               Zeigt die aktuelle Skript-Version (v2.9-stable) an.
---install-system        Installiert das Skript systemweit in ~/.scripts und setzt den PATH.
---kernelversion [VER]   Erzwingt den Build einer spezifischen Version (z. B. 6.12.1).
---purge-custom          Startet die automatisierte Deinstallation alter Custom-Kernel mittels temporärem Reboot.
---signonly              Signiert lediglich einen vorhandenen Kernel in /boot (kein Build).
---installautosign       Installiert das Hook-Skript für automatische Signierung bei Updates.
---uninstallautosign     Entfernt das Autosign-Skript und bereinigt optional die Schlüssel.
+git clone -b waydroid https://github.com/SoulInfernoDE/compile-kernel-from-source.git
 ```
 
+```bash
+cd compile-kernel-from-source && chmod +x kernel_upgrade kernel_upgrade_gui && ./kernel_upgrade --install-system && source ~/.bashrc
+```
 
-🔐 Secure Boot Hinweis
+Danach steht `kernel_upgrade` in jedem Terminal samt Autovervollständigung bereit, und die GUI findest du als **Kernel Upgrade** im Anwendungsmenü.
 
-Wenn du Secure Boot nutzt, wird das Skript dich beim ersten Durchlauf fragen, ob neue MOK-Schlüssel generiert werden sollen.
+## ⚙️ Parameter & Optionen
 
-Bestätige die Generierung.
+```
+Bauen
+--kernelversion VER     Version erzwingen (z. B. 6.12.1) oder Kanal: stable | longterm | mainline
+--jobs N                Anzahl paralleler Build-Jobs (Standard: alle Kerne)
+--no-reboot             Kein Sicherheits-Neustart; baut im laufenden Custom-Kernel
+--purge-custom          Löscht alte Custom-Kernel samt Resten
+--with-dbg              Installiert zusätzlich das (große) Debug-Paket
+--keep-source           Quellbaum nach erfolgreichem Build behalten
+-y, --yes               Alle Rückfragen mit dem Standard beantworten
+--no-autosign           Autosign-Hook nicht installieren
+--dry-run               Zeigt nur, was passieren würde
 
-Starte das System nach Abschluss des Skripts neu.
+Verwalten
+--list                  Installierte Kernel und verfügbare Versionen anzeigen
+--remove VER            Einen einzelnen Custom-Kernel entfernen
+--cleanup               Nur bereinigen, kein Build
+--signonly [VER]        Nur einen vorhandenen Kernel in /boot signieren
+--installautosign       Installiert/aktualisiert den Autosign-Hook
+--uninstallautosign     Entfernt den Autosign-Hook und optional die Schlüssel
+--install-system        Installiert Skript, GUI und Icon
+--update / --no-update  Nur nach Update suchen / Update-Prüfung überspringen
+--version, -h, --help   Version bzw. Hilfe anzeigen
+```
 
-Im blauen Menü (MOK Manager) wähle: Enroll MOK -> Continue -> Yes -> Passwort eingeben -> Reboot.
+Umgebungsvariablen: `KU_BUILD_DIR` (Build-Verzeichnis), `KU_LOCALVERSION` (Suffix, Standard `-waydroid`), `KU_NO_UPDATE=1`, `KU_NET_WAIT` (Wartezeit auf das Netzwerk in Sekunden, Standard 60).
+
+## 🔐 Secure Boot Hinweis
+
+Beim ersten Durchlauf erzeugt das Skript auf Wunsch neue MOK-Schlüssel und fragt nach einem Einmal-Passwort.
+
+1. Starte das System nach Abschluss des Skripts neu.
+2. Wähle im blauen MOK-Manager: Enroll MOK → Continue → Yes → Passwort eingeben → Reboot.
+
 Der neue Kernel kann nun sicher gebootet werden.
 
+## 📂 Dateistruktur
 
-📂 Dateistruktur
-
-~/.scripts/: Installationsort für die globale Ausführung im System environment.
-
-~/Downloads: Hier werden die Kernel-Sourcen entpackt und die .deb-Pakete erstellt.
-
-~/.mok_keys: Speicherort deiner privaten UEFI-Schlüssel (sowohl als PEM als auch als binäres DER-Format).
-
-/var/lib/shim-signed/mok/: System-Pfad für maximale Kompatibilität mit sbsign und dkms / kmodsign.
-
-/etc/kernel/postinst.d/: Installationsort des Autosign-Hooks.
+| Pfad | Zweck |
+| --- | --- |
+| `~/.scripts/` | Installationsort von `kernel_upgrade` und `kernel_upgrade_gui` |
+| `~/Downloads/kernel_upgrade/` | Build-Verzeichnis: Quellen, Build-Log und fertige `.deb`-Pakete |
+| `~/.mok_keys/` | Deine privaten UEFI-Schlüssel (PEM und DER) |
+| `/var/lib/shim-signed/mok/` | System-Pfad der Schlüssel für `sbsign`, `dkms` und `kmodsign` |
+| `/etc/kernel/postinst.d/sign_kernel_images` | Autosign-Hook |
+| `~/.config/kernel_upgrade/config-fragment` | Optionales eigenes Konfigurations-Fragment |

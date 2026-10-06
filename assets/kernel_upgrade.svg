@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#27346b"/>
+      <stop offset="1" stop-color="#0d1226"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2247"/>
+      <stop offset="1" stop-color="#121733"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#4ade80"/>
+    </linearGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#aab6e8"/>
+      <stop offset="1" stop-color="#6f7fc4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect x="12" y="12" width="232" height="232" rx="54" fill="url(#bg)"/>
+  <rect x="12.5" y="12.5" width="231" height="231" rx="53.5" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+
+  <!-- chip pins -->
+  <g fill="url(#pin)">
+    <rect x="89"  y="44" width="12" height="26" rx="6"/>
+    <rect x="122" y="44" width="12" height="26" rx="6"/>
+    <rect x="155" y="44" width="12" height="26" rx="6"/>
+    <rect x="89"  y="186" width="12" height="26" rx="6"/>
+    <rect x="122" y="186" width="12" height="26" rx="6"/>
+    <rect x="155" y="186" width="12" height="26" rx="6"/>
+    <rect x="44" y="89"  width="26" height="12" rx="6"/>
+    <rect x="44" y="122" width="26" height="12" rx="6"/>
+    <rect x="44" y="155" width="26" height="12" rx="6"/>
+    <rect x="186" y="89"  width="26" height="12" rx="6"/>
+    <rect x="186" y="122" width="26" height="12" rx="6"/>
+    <rect x="186" y="155" width="26" height="12" rx="6"/>
+  </g>
+
+  <!-- chip body -->
+  <rect x="62" y="62" width="132" height="132" rx="26" fill="url(#core)" stroke="#8e9be0" stroke-width="6"/>
+
+  <!-- upgrade arrow -->
+  <path d="M128 84 L168 128 H144 V172 H112 V128 H88 Z" fill="url(#arrow)" stroke="url(#arrow)" stroke-width="8" stroke-linejoin="round"/>
+</svg>
