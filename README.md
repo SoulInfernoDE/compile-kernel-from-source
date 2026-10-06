@@ -6,7 +6,7 @@
 
 A fully automated bash script with a graphical front end to compile, install, and sign current mainline Linux kernels. It integrates the kernel features Waydroid needs, cleans up old kernel remnants, and takes care of UEFI Secure Boot signing.
 
-![Kernel Upgrade GUI](assets/screenshot.png)
+![Kernel Upgrade GUI](assets/screenshot_en.png)
 
 ## 🚀 Features
 
