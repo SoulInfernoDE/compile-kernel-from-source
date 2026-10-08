@@ -5,7 +5,7 @@
 #
 
 # --- VERSION ---
-SCRIPT_VERSION="v4.2-stable"
+SCRIPT_VERSION="v4.3-stable"
 REPO_RAW="${KU_REPO_RAW:-https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid}"
 UPDATE_URL="$REPO_RAW/kernel_upgrade"
 
@@ -510,17 +510,59 @@ remove_single_kernel() {
 # ==============================================================================
 
 pending_resume() { [ -f "$AUTOSTART_FILE" ] || [ -f "$RESUME_ARGS_FILE" ]; }
+resume_armed() { pending_resume || grub_next_entry_set; }
 
 grub_next_entry_set() {
     command -v grub-editenv >/dev/null 2>&1 || return 1
     grub-editenv "$GRUB_ENV" list 2>/dev/null | grep -q '^next_entry=.'
 }
 
-cancel_pending_resume() {
-    run rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+# GRUB löscht den Einmalstart (next_entry) beim Booten selbst - aber nur, wenn es
+# auf /boot schreiben kann. Auf btrfs, LVM, RAID oder ZFS geht das nicht: der
+# Eintrag bliebe für immer aktiv und jeder Start landete im Distributions-Kernel.
+clear_grub_boot_once() {
     if grub_next_entry_set; then
         run sudo grub-editenv "$GRUB_ENV" unset next_entry || true
     fi
+}
+
+cancel_pending_resume() {
+    run rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+    clear_grub_boot_once
+}
+
+grub_default_setting() { # wirksamer Wert von GRUB_DEFAULT
+    ( set +u
+      [ -r /etc/default/grub ] && . /etc/default/grub
+      for f in /etc/default/grub.d/*.cfg; do [ -r "$f" ] && . "$f"; done
+      printf '%s' "${GRUB_DEFAULT:-0}" ) 2>/dev/null || printf '0'
+}
+
+# Sorgt dafür, dass der frisch installierte Kernel beim nächsten Start bootet.
+ensure_boot_default() { # $1 = Kernel-Release
+    local def entry newest
+    clear_grub_boot_once
+    def=$(grub_default_setting)
+    newest=$(installed_kernels | head -n 1)
+    case "$def" in
+        saved)
+            entry=$(find_grub_entry "$1")
+            if [ -n "$entry" ] && sudo grub-set-default "$entry"; then
+                ok "GRUB-Standard auf $1 gesetzt." "GRUB default set to $1."
+            else
+                err "GRUB-Standard konnte nicht auf $1 gesetzt werden." "Could not set the GRUB default to $1."
+            fi ;;
+        0|"")
+            if [ "$newest" = "$1" ]; then
+                ok "GRUB startet standardmäßig $1." "GRUB boots $1 by default."
+            else
+                info "Hinweis: GRUB startet standardmäßig den neuesten Kernel ($newest). $1 findest du unter 'Erweiterte Optionen'." \
+                     "Note: GRUB boots the newest kernel ($newest) by default. You find $1 under 'Advanced options'."
+            fi ;;
+        *)
+            info "Hinweis: GRUB_DEFAULT ist in /etc/default/grub fest auf '$def' gesetzt und wurde nicht verändert." \
+                 "Note: GRUB_DEFAULT is pinned to '$def' in /etc/default/grub and was not changed." ;;
+    esac
 }
 
 launch_in_terminal() { # $@ = Kommando
@@ -555,6 +597,7 @@ autostart_resume() {
 handle_resume() {
     info "Setze Kernel-Upgrade nach Neustart fort..." "Resuming kernel upgrade after reboot..."
     run rm -f "$AUTOSTART_FILE" "$RESUME_ARGS_FILE" "$RESUME_UI_FILE"
+    clear_grub_boot_once
     if is_custom_kernel "$(uname -r)"; then
         err "Achtung: Das System läuft weiterhin im Custom-Kernel $(uname -r). Dieser wird nicht entfernt." \
             "Warning: the system is still running the custom kernel $(uname -r). It will not be removed."
@@ -657,8 +700,16 @@ nsComment               = "OpenSSL Generated Certificate"
 EOF
 }
 
+mok_state() { # $1 = DER-Datei -> enrolled | pending | none
+    local out
+    out=$(mokutil --test-key "$1" 2>&1 || true)
+    if grep -qi 'already enrolled' <<<"$out"; then echo enrolled
+    elif grep -qi 'enrollment request' <<<"$out"; then echo pending
+    else echo none; fi
+}
+
 manage_keys() {
-    local state
+    local state sys_ready=false
     mkdir -p "$USER_MOK_DIR"
     chmod 700 "$USER_MOK_DIR"
     info "Prüfe MOK Schlüssel..." "Checking MOK keys..."
@@ -676,7 +727,16 @@ manage_keys() {
         openssl x509 -in "$MOK_DER" -inform DER -outform PEM -out "$MOK_PEM"
     fi
 
-    if [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
+    # Ein bereits in der Firmware registrierter Systemschlüssel wird nie überschrieben -
+    # sonst würde mit einem Schlüssel signiert, den Secure Boot nicht kennt.
+    if is_efi && command -v mokutil >/dev/null 2>&1 && sys_keys_present \
+       && sudo test -f "$SYS_MOK_DIR/MOK.der" && [ "$(mok_state "$SYS_MOK_DIR/MOK.der")" = enrolled ]; then
+        sys_ready=true
+    fi
+
+    if [ "$sys_ready" = true ]; then
+        :
+    elif [ -f "$MOK_PRIV" ] && [ -f "$MOK_PEM" ]; then
         chmod 600 "$MOK_PRIV"
         sudo install -d -m 755 "$SYS_MOK_DIR"
         sudo install -m 600 "$MOK_PRIV" "$SYS_MOK_DIR/MOK.priv"
@@ -688,17 +748,24 @@ manage_keys() {
 
     # Ist der Schlüssel im Firmware-Schlüsselbund registriert?
     if is_efi && command -v mokutil >/dev/null 2>&1; then
-        state=$(mokutil --test-key "$SYS_MOK_DIR/MOK.der" 2>&1 || true)
-        if grep -qi 'already enrolled' <<<"$state"; then
+        state=$(mok_state "$SYS_MOK_DIR/MOK.der")
+        if [ "$state" = enrolled ]; then
             ok "MOK-Schlüssel ist registriert." "MOK key is enrolled."
-        elif grep -qi 'enrollment request' <<<"$state"; then
+        elif [ "$state" = pending ]; then
             MOK_PENDING=true
+        elif ! mokutil --sb-state 2>/dev/null | grep -qi 'enabled'; then
+            info "Secure Boot ist deaktiviert - die MOK-Registrierung wird übersprungen. Bei Bedarf später: sudo mokutil --import $SYS_MOK_DIR/MOK.der" \
+                 "Secure Boot is disabled - skipping MOK enrollment. If needed later: sudo mokutil --import $SYS_MOK_DIR/MOK.der"
         else
-            info "MOK-Schlüssel ist noch nicht registriert. Bitte jetzt ein Einmal-Passwort vergeben:" "MOK key is not enrolled yet. Please set a one-time password now:"
+            info "MOK-Schlüssel ist noch nicht registriert. Bitte jetzt ein Einmal-Passwort vergeben (zweimal eingeben):" \
+                 "MOK key is not enrolled yet. Please set a one-time password now (enter it twice):"
             if sudo mokutil --import "$SYS_MOK_DIR/MOK.der"; then
                 MOK_PENDING=true
             else
-                err "mokutil --import ist fehlgeschlagen." "mokutil --import failed."
+                err "Die MOK-Registrierung (mokutil --import) ist fehlgeschlagen - siehe Meldung oben." \
+                    "MOK enrollment (mokutil --import) failed - see the message above."
+                info "Es geht trotzdem weiter. Mit aktivem Secure Boot startet ein selbst signierter Kernel aber erst nach der Registrierung. Nachholen mit: sudo mokutil --import $SYS_MOK_DIR/MOK.der" \
+                     "Continuing anyway. With Secure Boot enabled a self-signed kernel only boots after enrollment. Retry with: sudo mokutil --import $SYS_MOK_DIR/MOK.der"
             fi
         fi
     fi
@@ -938,7 +1005,7 @@ print_status_json() {
     printf '"localversion":%s,"secure_boot":%s,"mok":%s,"autosign":%s,' \
         "$(json_str "$LOCALVER")" "$(json_str "$sb")" "$(json_str "$mok")" "$(json_str "$hook")"
     printf '"free_gb":%s,"cores":%s,"work_dir":%s,"pending_resume":%s,"libc_dev_custom":%s,' \
-        "${free_gb:-0}" "$(nproc)" "$(json_str "$WORK")" "$(json_bool pending_resume)" \
+        "${free_gb:-0}" "$(nproc)" "$(json_str "$WORK")" "$(json_bool resume_armed)" \
         "$(json_bool test "$(dpkg-query -W -f '${source:Package}' linux-libc-dev 2>/dev/null || true)" = linux-upstream)"
     printf '"installed_systemwide":%s,"kernels":[' "$(json_bool test -x "$HOME/.scripts/kernel_upgrade")"
     while IFS= read -r v; do
@@ -1011,7 +1078,7 @@ case "$MODE" in
     remove) remove_single_kernel; exit 0 ;;
     cleanup)
         start_sudo
-        if pending_resume; then cancel_pending_resume; fi
+        cancel_pending_resume
         purge_old_custom_kernels
         exit 0 ;;
     uninstallautosign) start_sudo; uninstall_autosign; exit 0 ;;
@@ -1024,7 +1091,7 @@ start_sudo
 
 if [ "$RESUMED_FROM_REBOOT" = true ]; then
     handle_resume
-elif pending_resume; then
+elif resume_armed; then
     # Ein früherer Lauf wurde vor dem Neustart abgebrochen: Autostart-Eintrag und
     # der einmalige GRUB-Booteintrag würden sonst beim nächsten Start zuschlagen.
     info "Entferne Reste eines abgebrochenen Neustart-Vorgangs..." "Removing leftovers of an aborted reboot sequence..."
@@ -1305,6 +1372,7 @@ fi
 
 # --- Aufräumen ---
 stage 7 "Aufräumen" "Clean up"
+ensure_boot_default "$KREL"
 if [ "$KEEP_SOURCE" = false ]; then
     find "$WORK" -mindepth 1 -maxdepth 1 -type d -name 'linux-*' -exec rm -rf {} +
     rm -f "$WORK"/linux-*.tar.* "$WORK"/linux-libc-dev_*.deb "$WORK"/linux-upstream_*

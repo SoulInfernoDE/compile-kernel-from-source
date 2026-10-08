@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/kernel_upgrade.png" width="128" alt="Kernel Upgrade"></p>
 
-# Kernel Upgrade (v4.2)
+# Kernel Upgrade (v4.3)
 
 [🇩🇪 Wechseln zur deutschen Version](README_DE.md)
 
