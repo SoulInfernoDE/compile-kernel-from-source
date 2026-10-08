@@ -5,7 +5,7 @@
 #
 
 # --- VERSION ---
-SCRIPT_VERSION="v4.3-stable"
+SCRIPT_VERSION="v4.4-stable"
 REPO_RAW="${KU_REPO_RAW:-https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/refs/heads/waydroid}"
 UPDATE_URL="$REPO_RAW/kernel_upgrade"
 
@@ -172,7 +172,9 @@ fi
 
 # --- KONFIGURATION ---
 CPATH="$HOME/Downloads"
-WORK="${KU_BUILD_DIR:-$CPATH/kernel_upgrade}"
+# Nicht "kernel_upgrade": so heißt auch das heruntergeladene Skript in ~/Downloads
+WORK="${KU_BUILD_DIR:-$CPATH/kernel_upgrade_build}"
+LEGACY_WORK="$CPATH/kernel_upgrade"
 WORK_MARKER=".kernel_upgrade_workdir"
 LOCALVER="${KU_LOCALVERSION:--waydroid}"
 USER_MOK_DIR="$HOME/.mok_keys"
@@ -1187,6 +1189,14 @@ fi
 # --- Build-Verzeichnis ---
 # Ein eigenes Verzeichnis statt ~/Downloads, damit beim Aufräumen garantiert
 # nur Dateien dieses Skripts gelöscht werden.
+# Build-Verzeichnis früherer Versionen (v4.0 - v4.3) übernehmen
+if [ -z "${KU_BUILD_DIR:-}" ] && [ -f "$LEGACY_WORK/$WORK_MARKER" ] && [ ! -e "$WORK" ]; then
+    mv "$LEGACY_WORK" "$WORK"
+fi
+if [ -e "$WORK" ] && [ ! -d "$WORK" ]; then
+    die "$WORK ist eine Datei und kann nicht als Build-Verzeichnis dienen. Bitte verschieben oder KU_BUILD_DIR setzen." \
+        "$WORK is a file and cannot be used as build directory. Please move it or set KU_BUILD_DIR."
+fi
 if [ -d "$WORK" ] && [ ! -f "$WORK/$WORK_MARKER" ] && [ -n "$(ls -A "$WORK")" ]; then
     die "$WORK existiert bereits und gehört nicht zu kernel_upgrade. Bitte KU_BUILD_DIR setzen." \
         "$WORK already exists and does not belong to kernel_upgrade. Please set KU_BUILD_DIR."

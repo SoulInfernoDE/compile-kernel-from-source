@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/kernel_upgrade.png" width="128" alt="Kernel Upgrade"></p>
 
-# Kernel Upgrade (v4.3)
+# Kernel Upgrade (v4.4)
 
 [🇩🇪 Wechseln zur deutschen Version](README_DE.md)
 
@@ -95,7 +95,7 @@ The new kernel can now be booted securely.
 | Path | Purpose |
 | --- | --- |
 | `~/.scripts/` | Installation path of `kernel_upgrade` and `kernel_upgrade_gui` |
-| `~/Downloads/kernel_upgrade/` | Build directory: sources, build log and finished `.deb` packages |
+| `~/Downloads/kernel_upgrade_build/` | Build directory: sources, build log and finished `.deb` packages |
 | `~/.mok_keys/` | Your private UEFI keys (PEM and DER) |
 | `/var/lib/shim-signed/mok/` | System path of the keys for `sbsign`, `dkms` and `kmodsign` |
 | `/etc/kernel/postinst.d/sign_kernel_images` | Autosign hook |
