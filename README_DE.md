@@ -44,14 +44,10 @@ Build-Abhängigkeiten installiert das Skript automatisch via `apt`.
 ## 📦 Installation & Nutzung
 
 ```bash
-git clone -b waydroid https://github.com/SoulInfernoDE/compile-kernel-from-source.git
+curl -fsSL https://raw.githubusercontent.com/SoulInfernoDE/compile-kernel-from-source/waydroid/kernel_upgrade | bash
 ```
 
-```bash
-cd compile-kernel-from-source && chmod +x kernel_upgrade kernel_upgrade_gui && ./kernel_upgrade --install-system && source ~/.bashrc
-```
-
-Danach steht `kernel_upgrade` in jedem Terminal samt Autovervollständigung bereit, und die GUI findest du als **Kernel Upgrade** im Anwendungsmenü.
+Das war's: Skript und GUI sind nach `~/.scripts` installiert. Öffne ein neues Terminal und starte `kernel_upgrade`, oder öffne **Kernel Upgrade** im Anwendungsmenü.
 
 ## ⚙️ Parameter & Optionen
 

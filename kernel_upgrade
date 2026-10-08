@@ -12,8 +12,17 @@ UPDATE_URL="$REPO_RAW/kernel_upgrade"
 set -euo pipefail
 
 ORIG_ARGS=("$@")
-SELF=$(realpath "${BASH_SOURCE[0]}")
-SELF_DIR=$(dirname "$SELF")
+# Wird das Skript per "curl ... | bash" gestartet, gibt es keine Skript-Datei.
+# Dann installiert es sich selbst aus dem Repository.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    PIPED=false
+    SELF=$(realpath "${BASH_SOURCE[0]}")
+    SELF_DIR=$(dirname "$SELF")
+else
+    PIPED=true
+    SELF=""
+    SELF_DIR="/nonexistent"
+fi
 
 # --- FARBEN ---
 RED='\033[1;31m'
@@ -166,7 +175,13 @@ done
 
 # Das Skript holt sich Root-Rechte selbst per sudo. Wird es komplett als root
 # gestartet, zeigen $HOME, Schlüssel und Build-Verzeichnis auf /root.
-if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+if [ "$PIPED" = true ]; then
+    [ "$EUID" -ne 0 ] || die "Bitte ohne sudo starten." "Please run without sudo."
+    if [ "$MODE" = build ] && [ "${#ORIG_ARGS[@]}" -eq 0 ]; then MODE="installsystem"; fi
+    [ "$MODE" = installsystem ] || die "Per Pipe ist nur die Installation möglich. Danach: kernel_upgrade [OPTIONEN]" \
+                                       "Only the installation is possible via pipe. Afterwards: kernel_upgrade [OPTIONS]"
+    NO_UPDATE=true
+elif [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     exec sudo -u "$SUDO_USER" -H -- "$SELF" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
 fi
 
